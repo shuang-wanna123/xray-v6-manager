@@ -11,8 +11,8 @@
 
 一键安装 Xray 多协议代理服务，支持 IPv4/IPv6 双栈入站，强制指定 IP 协议出站。
 
-[![GitHub release](https://img.shields.io/github/v/release/你的用户名/xray-v6-manager)](https://github.com/你的用户名/xray-v6-manager/releases)
-[![License](https://img.shields.io/github/license/你的用户名/xray-v6-manager)](LICENSE)
+[![GitHub release](https://img.shields.io/github/v/release/shuang-wanna123/xray-v6-manager)](https://github.com/shuang-wanna123/xray-v6-manager/releases)
+[![License](https://img.shields.io/github/license/shuang-wanna123/xray-v6-manager)](LICENSE)
 
 ## ✨ 功能特性
 
@@ -44,13 +44,13 @@
 ## 📥 一键安装
 
 ```bash
-bash <(curl -sL https://raw.githubusercontent.com/你的用户名/xray-v6-manager/main/install.sh)
+bash <(curl -sL https://raw.githubusercontent.com/shuang-wanna123/xray-v6-manager/main/install.sh)
 ```
 
 或
 
 ```bash
-wget -O install.sh https://raw.githubusercontent.com/你的用户名/xray-v6-manager/main/install.sh && bash install.sh
+wget -O install.sh https://raw.githubusercontent.com/shuang-wanna123/xray-v6-manager/main/install.sh && bash install.sh
 ```
 
 ## 🎛️ 管理命令
