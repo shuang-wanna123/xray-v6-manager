@@ -1,5 +1,4 @@
 
-```markdown
 # Xray-V6-Manager
 
 一键安装 Xray 多协议代理服务，支持 IPv4/IPv6 双栈入站，强制指定 IP 协议出站。
