@@ -1,12 +1,14 @@
 #!/bin/bash
 
 #===============================================================================
-# VLESS + SOCKS5 四合一安装脚本 v8.2
+# VLESS + SOCKS5 四合一安装脚本 v8.3
 # 1. SOCKS5 - 仅 IPv4 出站
 # 2. SOCKS5 - 仅 IPv6 出站
 # 3. VLESS  - 仅 IPv4 出站（CF CDN）
 # 4. VLESS  - 仅 IPv6 出站（CF CDN）
-# 所有入站支持 IPv4/IPv6 双栈接入
+# 特性：
+#   - 所有入站支持 IPv4/IPv6 双栈接入
+#   - 内置 WebRTC/STUN 拦截防止 IP 泄露
 # 管理命令: xray-v6
 #===============================================================================
 
@@ -22,6 +24,7 @@ NC='\033[0m'
 INSTALL_DIR="/root/xray"
 SERVICE_NAME="xray-v6"
 PARAMS_FILE="$INSTALL_DIR/params.conf"
+SCRIPT_VERSION="8.3"
 
 # 全局变量（安装时设置）
 OS=""
@@ -66,7 +69,7 @@ print_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 # 检查端口是否被占用
 check_port() {
     local port=$1
-    if ss -tlnp | grep -q ":${port} "; then
+    if ss -tlnp 2>/dev/null | grep -q ":${port} "; then
         return 1
     fi
     return 0
@@ -84,6 +87,7 @@ get_random_port() {
             return 0
         fi
     done
+    # 如果找不到可用端口，返回随机端口
     echo $((RANDOM % (max - min + 1) + min))
 }
 
@@ -106,7 +110,7 @@ random_password() {
 save_params() {
     mkdir -p "$INSTALL_DIR"
     cat > "$PARAMS_FILE" << EOF
-# Xray 配置参数 v8.2
+# Xray 配置参数 v${SCRIPT_VERSION}
 # 生成时间: $(date '+%Y-%m-%d %H:%M:%S')
 
 # 基本信息
@@ -169,7 +173,7 @@ generate_xray_config() {
         return 1
     fi
     
-    # 构建 inbounds 数组
+    # ==================== 构建 Inbounds ====================
     local inbounds=""
     local first_inbound=true
     
@@ -271,7 +275,7 @@ generate_xray_config() {
         return 1
     fi
     
-    # 构建 outbounds
+    # ==================== 构建 Outbounds ====================
     local outbounds='{
       "tag": "IPv4-out",
       "protocol": "freedom",
@@ -293,7 +297,7 @@ generate_xray_config() {
     {"tag": "direct", "protocol": "freedom"},
     {"tag": "block", "protocol": "blackhole"}'
     
-    # 构建路由规则
+    # ==================== 构建路由规则 ====================
     local v4_tags=""
     local v6_tags=""
     
@@ -305,24 +309,64 @@ generate_xray_config() {
         [ "$VLESS_V6_ENABLED" = "true" ] && { [ -n "$v6_tags" ] && v6_tags+=","; v6_tags+='"vless-v6-in"'; }
     fi
     
-    local rules=""
-    local first_rule=true
+    # 规则1: WebRTC/STUN 拦截（防止 IP 泄露）- 放在最前面
+    local rules='{
+        "type": "field",
+        "domain": [
+          "keyword:stun",
+          "keyword:turn",
+          "domain:stun.l.google.com",
+          "domain:stun1.l.google.com",
+          "domain:stun2.l.google.com",
+          "domain:stun3.l.google.com",
+          "domain:stun4.l.google.com",
+          "domain:stun.ekiga.net",
+          "domain:stun.ideasip.com",
+          "domain:stun.schlund.de",
+          "domain:stun.stunprotocol.org",
+          "domain:stun.voiparound.com",
+          "domain:stun.voipbuster.com",
+          "domain:stun.voipstunt.com",
+          "domain:stun.counterpath.com",
+          "domain:stun.counterpath.net",
+          "domain:stun.qq.com",
+          "domain:stun.miwifi.com",
+          "domain:stun.chat.bilibili.com",
+          "domain:stun.hitv.com",
+          "domain:stun.syncthing.net"
+        ],
+        "outboundTag": "block"
+      }'
     
+    # 规则2: IPv4 入站路由
     if [ -n "$v4_tags" ]; then
-        rules='{"type": "field", "inboundTag": ['"$v4_tags"'], "outboundTag": "IPv4-out"}'
-        first_rule=false
+        rules+=',
+      {
+        "type": "field",
+        "inboundTag": ['"$v4_tags"'],
+        "outboundTag": "IPv4-out"
+      }'
     fi
     
+    # 规则3: IPv6 入站路由
     if [ -n "$v6_tags" ]; then
-        [ "$first_rule" = "false" ] && rules+=","
-        rules+='{"type": "field", "inboundTag": ['"$v6_tags"'], "outboundTag": "IPv6-out"}'
-        first_rule=false
+        rules+=',
+      {
+        "type": "field",
+        "inboundTag": ['"$v6_tags"'],
+        "outboundTag": "IPv6-out"
+      }'
     fi
     
-    [ "$first_rule" = "false" ] && rules+=","
-    rules+='{"type": "field", "outboundTag": "block", "protocol": ["bittorrent"]}'
+    # 规则4: 阻止 BT
+    rules+=',
+      {
+        "type": "field",
+        "protocol": ["bittorrent"],
+        "outboundTag": "block"
+      }'
     
-    # 写入配置文件
+    # ==================== 写入配置文件 ====================
     cat > "$config_file" << EOFCONFIG
 {
   "log": {
@@ -354,6 +398,10 @@ EOFCONFIG
     return 0
 }
 
+#===============================================================================
+# 信息生成
+#===============================================================================
+
 generate_info() {
     local info_file="$INSTALL_DIR/info.txt"
     
@@ -365,19 +413,21 @@ generate_info() {
     cat > "$info_file" << EOF
 
 ╔═══════════════════════════════════════════════════════════════════════════════╗
-║                      四合一代理节点配置信息 v8.2                              ║
+║                      四合一代理节点配置信息 v${SCRIPT_VERSION}                            ║
 ║                     所有入站支持 IPv4/IPv6 双栈接入                           ║
+║                     已启用 WebRTC/STUN 拦截防止泄露                           ║
 ╚═══════════════════════════════════════════════════════════════════════════════╝
 
 ═══════════════════════════════════════════════════════════════════════════════
                                  基本信息
 ═══════════════════════════════════════════════════════════════════════════════
-  VPS IPv4:   $VPS_IP
-  VPS IPv6:   ${IPV6_ADDR:-无}
-  域名:       $DOMAIN
-  UUID:       $UUID
-  优选地址:   $CDN_HOST
-  管理命令:   xray-v6
+  VPS IPv4:    $VPS_IP
+  VPS IPv6:    ${IPV6_ADDR:-无}
+  域名:        $DOMAIN
+  UUID:        $UUID
+  优选地址:    $CDN_HOST
+  管理命令:    xray-v6
+  WebRTC拦截:  ✅ 已启用
 
 EOF
 
@@ -505,6 +555,24 @@ EOF
     cat >> "$info_file" << EOF
 
 ═══════════════════════════════════════════════════════════════════════════════
+                          WebRTC 防泄露说明
+═══════════════════════════════════════════════════════════════════════════════
+
+  服务端已拦截常见 STUN 服务器，建议额外配置浏览器:
+
+  Firefox:
+    地址栏输入 about:config
+    搜索 media.peerconnection.enabled 设为 false
+
+  Chrome:
+    安装插件 "WebRTC Leak Prevent"
+    设置为 "Disable non-proxied UDP"
+
+  测试是否泄露:
+    https://browserleaks.com/webrtc
+    https://ipleak.net
+
+═══════════════════════════════════════════════════════════════════════════════
 EOF
 }
 
@@ -528,6 +596,7 @@ NC='\033[0m'
 DIR="/root/xray"
 SERVICE="xray-v6"
 PARAMS_FILE="$DIR/params.conf"
+SCRIPT_VERSION="8.3"
 
 # 加载参数
 load_params() {
@@ -542,6 +611,9 @@ load_params() {
 # 保存参数
 save_params() {
     cat > "$PARAMS_FILE" << EOF
+# Xray 配置参数 v${SCRIPT_VERSION}
+# 更新时间: $(date '+%Y-%m-%d %H:%M:%S')
+
 DOMAIN="${DOMAIN}"
 EMAIL="${EMAIL}"
 UUID="${UUID}"
@@ -549,17 +621,21 @@ VPS_IP="${VPS_IP}"
 IPV6_ADDR="${IPV6_ADDR}"
 HAS_IPV6="${HAS_IPV6}"
 CDN_HOST="${CDN_HOST}"
+
 SOCKS5_V4_ENABLED="${SOCKS5_V4_ENABLED}"
 SOCKS5_V4_PORT="${SOCKS5_V4_PORT}"
 SOCKS5_V4_USER="${SOCKS5_V4_USER}"
 SOCKS5_V4_PASS="${SOCKS5_V4_PASS}"
+
 SOCKS5_V6_ENABLED="${SOCKS5_V6_ENABLED}"
 SOCKS5_V6_PORT="${SOCKS5_V6_PORT}"
 SOCKS5_V6_USER="${SOCKS5_V6_USER}"
 SOCKS5_V6_PASS="${SOCKS5_V6_PASS}"
+
 VLESS_V4_ENABLED="${VLESS_V4_ENABLED}"
 VLESS_V4_PORT="${VLESS_V4_PORT}"
 VLESS_V4_PATH="${VLESS_V4_PATH}"
+
 VLESS_V6_ENABLED="${VLESS_V6_ENABLED}"
 VLESS_V6_PORT="${VLESS_V6_PORT}"
 VLESS_V6_PATH="${VLESS_V6_PATH}"
@@ -572,31 +648,36 @@ regenerate_all() {
     load_params || return 1
     
     if [ -z "$UUID" ]; then
-        echo -e "${RED}UUID 为空，请检查配置${NC}"
+        echo -e "${RED}错误: UUID 为空${NC}"
         return 1
     fi
     
     # ==================== 生成 config.json ====================
-    local inbounds="" first=true
+    local inbounds=""
+    local first=true
     
+    # SOCKS5-IPv4
     if [ "$SOCKS5_V4_ENABLED" = "true" ]; then
         [ "$first" = "false" ] && inbounds+=","
         inbounds+='{"tag":"socks-v4-in","listen":"::","port":'$SOCKS5_V4_PORT',"protocol":"socks","settings":{"auth":"password","accounts":[{"user":"'$SOCKS5_V4_USER'","pass":"'$SOCKS5_V4_PASS'"}],"udp":true}}'
         first=false
     fi
     
+    # SOCKS5-IPv6
     if [ "$SOCKS5_V6_ENABLED" = "true" ] && [ "$HAS_IPV6" = "true" ]; then
         [ "$first" = "false" ] && inbounds+=","
         inbounds+='{"tag":"socks-v6-in","listen":"::","port":'$SOCKS5_V6_PORT',"protocol":"socks","settings":{"auth":"password","accounts":[{"user":"'$SOCKS5_V6_USER'","pass":"'$SOCKS5_V6_PASS'"}],"udp":true}}'
         first=false
     fi
     
+    # VLESS-IPv4
     if [ "$VLESS_V4_ENABLED" = "true" ]; then
         [ "$first" = "false" ] && inbounds+=","
         inbounds+='{"tag":"vless-v4-in","listen":"::","port":'$VLESS_V4_PORT',"protocol":"vless","settings":{"clients":[{"id":"'$UUID'"}],"decryption":"none"},"streamSettings":{"network":"ws","security":"tls","tlsSettings":{"certificates":[{"certificateFile":"'$DIR'/cert/fullchain.crt","keyFile":"'$DIR'/cert/private.key"}]},"wsSettings":{"path":"'$VLESS_V4_PATH'"}}}'
         first=false
     fi
     
+    # VLESS-IPv6
     if [ "$VLESS_V6_ENABLED" = "true" ] && [ "$HAS_IPV6" = "true" ]; then
         [ "$first" = "false" ] && inbounds+=","
         inbounds+='{"tag":"vless-v6-in","listen":"::","port":'$VLESS_V6_PORT',"protocol":"vless","settings":{"clients":[{"id":"'$UUID'"}],"decryption":"none"},"streamSettings":{"network":"ws","security":"tls","tlsSettings":{"certificates":[{"certificateFile":"'$DIR'/cert/fullchain.crt","keyFile":"'$DIR'/cert/private.key"}]},"wsSettings":{"path":"'$VLESS_V6_PATH'"}}}'
@@ -608,22 +689,27 @@ regenerate_all() {
         return 1
     fi
     
+    # Outbounds
     local outbounds='{"tag":"IPv4-out","protocol":"freedom","settings":{"domainStrategy":"UseIPv4"},"sendThrough":"'$VPS_IP'"}'
     [ "$HAS_IPV6" = "true" ] && outbounds+=',{"tag":"IPv6-out","protocol":"freedom","settings":{"domainStrategy":"UseIPv6"},"sendThrough":"'$IPV6_ADDR'"}'
     outbounds+=',{"tag":"direct","protocol":"freedom"},{"tag":"block","protocol":"blackhole"}'
     
+    # Routing tags
     local v4="" v6=""
     [ "$SOCKS5_V4_ENABLED" = "true" ] && v4='"socks-v4-in"'
     [ "$VLESS_V4_ENABLED" = "true" ] && { [ -n "$v4" ] && v4+=","; v4+='"vless-v4-in"'; }
     [ "$SOCKS5_V6_ENABLED" = "true" ] && [ "$HAS_IPV6" = "true" ] && v6='"socks-v6-in"'
     [ "$VLESS_V6_ENABLED" = "true" ] && [ "$HAS_IPV6" = "true" ] && { [ -n "$v6" ] && v6+=","; v6+='"vless-v6-in"'; }
     
-    local rules="" first=true
-    [ -n "$v4" ] && { rules='{"type":"field","inboundTag":['$v4'],"outboundTag":"IPv4-out"}'; first=false; }
-    [ -n "$v6" ] && { [ "$first" = "false" ] && rules+=","; rules+='{"type":"field","inboundTag":['$v6'],"outboundTag":"IPv6-out"}'; first=false; }
-    [ "$first" = "false" ] && rules+=","
-    rules+='{"type":"field","outboundTag":"block","protocol":["bittorrent"]}'
+    # WebRTC/STUN 拦截规则（放在最前面）
+    local rules='{"type":"field","domain":["keyword:stun","keyword:turn","domain:stun.l.google.com","domain:stun1.l.google.com","domain:stun2.l.google.com","domain:stun3.l.google.com","domain:stun4.l.google.com","domain:stun.ekiga.net","domain:stun.ideasip.com","domain:stun.schlund.de","domain:stun.stunprotocol.org","domain:stun.voiparound.com","domain:stun.voipbuster.com","domain:stun.voipstunt.com","domain:stun.qq.com","domain:stun.miwifi.com","domain:stun.chat.bilibili.com","domain:stun.syncthing.net"],"outboundTag":"block"}'
     
+    # IPv4/IPv6 路由规则
+    [ -n "$v4" ] && rules+=',{"type":"field","inboundTag":['$v4'],"outboundTag":"IPv4-out"}'
+    [ -n "$v6" ] && rules+=',{"type":"field","inboundTag":['$v6'],"outboundTag":"IPv6-out"}'
+    rules+=',{"type":"field","protocol":["bittorrent"],"outboundTag":"block"}'
+    
+    # 写入配置文件
     echo '{"log":{"loglevel":"warning","access":"'$DIR'/log/access.log","error":"'$DIR'/log/error.log"},"inbounds":['$inbounds'],"outbounds":['$outbounds'],"routing":{"domainStrategy":"AsIs","rules":['$rules']}}' > "$DIR/config/config.json"
     
     # 验证配置
@@ -640,18 +726,19 @@ regenerate_all() {
     {
         echo ""
         echo "╔═══════════════════════════════════════════════════════════════════════════════╗"
-        echo "║                      四合一代理节点配置信息 v8.2                              ║"
+        echo "║                      四合一代理节点配置信息 v${SCRIPT_VERSION}                            ║"
+        echo "║                     已启用 WebRTC/STUN 拦截防止泄露                           ║"
         echo "╚═══════════════════════════════════════════════════════════════════════════════╝"
         echo ""
         echo "═══════════════════════════════════════════════════════════════════════════════"
         echo "                                 基本信息"
         echo "═══════════════════════════════════════════════════════════════════════════════"
-        echo "  VPS IPv4:   $VPS_IP"
-        echo "  VPS IPv6:   ${IPV6_ADDR:-无}"
-        echo "  域名:       $DOMAIN"
-        echo "  UUID:       $UUID"
-        echo "  优选地址:   $CDN_HOST"
-        echo "  管理命令:   xray-v6"
+        echo "  VPS IPv4:    $VPS_IP"
+        echo "  VPS IPv6:    ${IPV6_ADDR:-无}"
+        echo "  域名:        $DOMAIN"
+        echo "  UUID:        $UUID"
+        echo "  优选地址:    $CDN_HOST"
+        echo "  WebRTC拦截:  ✅ 已启用"
         echo ""
         
         if [ "$SOCKS5_V4_ENABLED" = "true" ]; then
@@ -691,6 +778,11 @@ regenerate_all() {
         fi
         
         echo "═══════════════════════════════════════════════════════════════════════════════"
+        echo "  浏览器防 WebRTC 泄露:"
+        echo "    Firefox: about:config → media.peerconnection.enabled → false"
+        echo "    Chrome:  安装 WebRTC Leak Prevent 插件"
+        echo "  测试: https://browserleaks.com/webrtc"
+        echo "═══════════════════════════════════════════════════════════════════════════════"
     } > "$DIR/info.txt"
     
     echo -e "${GREEN}配置已更新${NC}"
@@ -704,19 +796,23 @@ show_menu() {
     
     echo -e "${CYAN}"
     echo "╔═══════════════════════════════════════════════════════════════╗"
-    echo "║            Xray 四合一代理 管理面板 v8.2                     ║"
+    echo "║            Xray 四合一代理 管理面板 v${SCRIPT_VERSION}                     ║"
     echo "╚═══════════════════════════════════════════════════════════════╝"
     echo -e "${NC}"
     
+    # 服务状态
     if systemctl is-active --quiet $SERVICE 2>/dev/null; then
         echo -e "  服务状态: ${GREEN}● 运行中${NC}"
     else
         echo -e "  服务状态: ${RED}● 已停止${NC}"
     fi
     
+    # UUID 显示
     if [ -n "$UUID" ]; then
         echo -e "  UUID: ${YELLOW}${UUID:0:8}...${UUID: -4}${NC}"
     fi
+    
+    echo -e "  WebRTC拦截: ${GREEN}✅ 已启用${NC}"
     
     echo ""
     echo -e "${CYAN}─────────────────── 服务管理 ───────────────────${NC}"
@@ -740,66 +836,80 @@ show_menu() {
     echo ""
 }
 
+# 查看节点信息
 show_info() {
     clear
     if [ -f "$DIR/info.txt" ]; then
         cat "$DIR/info.txt"
     else
-        echo -e "${RED}信息文件不存在${NC}"
+        echo -e "${RED}配置信息文件不存在${NC}"
     fi
-    echo -e "\n${YELLOW}按回车返回...${NC}"
+    echo ""
+    echo -e "${YELLOW}按回车键返回菜单...${NC}"
     read
 }
 
+# 启动服务
 start_service() {
-    echo -e "${BLUE}启动服务...${NC}"
+    echo -e "${BLUE}正在启动服务...${NC}"
     systemctl start $SERVICE
     sleep 2
     if systemctl is-active --quiet $SERVICE; then
-        echo -e "${GREEN}启动成功${NC}"
+        echo -e "${GREEN}服务启动成功${NC}"
     else
-        echo -e "${RED}启动失败${NC}"
+        echo -e "${RED}服务启动失败${NC}"
         journalctl -u $SERVICE --no-pager -n 5
     fi
     sleep 2
 }
 
+# 停止服务
 stop_service() {
+    echo -e "${BLUE}正在停止服务...${NC}"
     systemctl stop $SERVICE
-    echo -e "${GREEN}已停止${NC}"
+    echo -e "${GREEN}服务已停止${NC}"
     sleep 2
 }
 
+# 重启服务
 restart_service() {
-    echo -e "${BLUE}重启服务...${NC}"
+    echo -e "${BLUE}正在重启服务...${NC}"
     systemctl restart $SERVICE
     sleep 2
     if systemctl is-active --quiet $SERVICE; then
-        echo -e "${GREEN}重启成功${NC}"
+        echo -e "${GREEN}服务重启成功${NC}"
     else
-        echo -e "${RED}重启失败${NC}"
+        echo -e "${RED}服务重启失败${NC}"
         journalctl -u $SERVICE --no-pager -n 5
     fi
     sleep 2
 }
 
+# 查看运行状态
 show_status() {
     clear
     echo -e "${CYAN}═══════════════════ 服务状态 ═══════════════════${NC}"
+    echo ""
     systemctl status $SERVICE --no-pager
     echo ""
     echo -e "${CYAN}═══════════════════ 端口监听 ═══════════════════${NC}"
+    echo ""
     ss -tlnp 2>/dev/null | grep -E "xray|$SOCKS5_V4_PORT|$SOCKS5_V6_PORT|$VLESS_V4_PORT|$VLESS_V6_PORT" || echo "未找到监听端口"
-    echo -e "\n${YELLOW}按回车返回...${NC}"
+    echo ""
+    echo -e "${YELLOW}按回车键返回菜单...${NC}"
     read
 }
 
+# 查看实时日志
 show_log() {
     clear
-    echo -e "${YELLOW}按 Ctrl+C 退出${NC}\n"
+    echo -e "${CYAN}═══════════════════ 实时日志 ═══════════════════${NC}"
+    echo -e "${YELLOW}按 Ctrl+C 退出日志查看${NC}"
+    echo ""
     tail -f "$DIR/log/error.log" 2>/dev/null || tail -f "$DIR/log/access.log" 2>/dev/null || echo "日志文件不存在"
 }
 
+# 修改 UUID
 modify_uuid() {
     load_params
     echo ""
@@ -821,11 +931,14 @@ modify_uuid() {
         echo -e "${GREEN}UUID 已更新: $UUID${NC}"
         echo -n -e "${YELLOW}是否重启服务？(y/n): ${NC}"
         read r
-        [ "$r" = "y" ] || [ "$r" = "Y" ] && restart_service
+        if [ "$r" = "y" ] || [ "$r" = "Y" ]; then
+            restart_service
+        fi
     fi
     sleep 2
 }
 
+# 修改端口
 modify_port() {
     load_params
     echo ""
@@ -843,6 +956,7 @@ modify_port() {
     echo -n "输入新端口 (1-65535): "
     read new_port
     
+    # 验证端口
     if ! [[ "$new_port" =~ ^[0-9]+$ ]] || [ "$new_port" -lt 1 ] || [ "$new_port" -gt 65535 ]; then
         echo -e "${RED}无效端口${NC}"
         sleep 2
@@ -863,11 +977,14 @@ modify_port() {
         echo -e "${GREEN}端口已更新${NC}"
         echo -n -e "${YELLOW}是否重启服务？(y/n): ${NC}"
         read r
-        [ "$r" = "y" ] || [ "$r" = "Y" ] && restart_service
+        if [ "$r" = "y" ] || [ "$r" = "Y" ]; then
+            restart_service
+        fi
     fi
     sleep 2
 }
 
+# 启用/禁用节点
 toggle_node() {
     load_params
     echo ""
@@ -909,11 +1026,14 @@ toggle_node() {
         echo -e "${GREEN}状态已更新${NC}"
         echo -n -e "${YELLOW}是否重启服务？(y/n): ${NC}"
         read r
-        [ "$r" = "y" ] || [ "$r" = "Y" ] && restart_service
+        if [ "$r" = "y" ] || [ "$r" = "Y" ]; then
+            restart_service
+        fi
     fi
     sleep 2
 }
 
+# 编辑配置文件
 edit_config() {
     if command -v nano &>/dev/null; then
         nano "$DIR/config/config.json"
@@ -922,28 +1042,37 @@ edit_config() {
     else
         vi "$DIR/config/config.json"
     fi
+    echo ""
     echo -n -e "${YELLOW}是否重启服务？(y/n): ${NC}"
     read r
-    [ "$r" = "y" ] || [ "$r" = "Y" ] && restart_service
+    if [ "$r" = "y" ] || [ "$r" = "Y" ]; then
+        restart_service
+    fi
 }
 
+# 测试配置文件
 test_config() {
     clear
     echo -e "${CYAN}═══════════════════ 配置测试 ═══════════════════${NC}"
+    echo ""
     "$DIR/bin/xray" run -test -c "$DIR/config/config.json"
-    echo -e "\n${YELLOW}按回车返回...${NC}"
+    echo ""
+    echo -e "${YELLOW}按回车键返回菜单...${NC}"
     read
 }
 
+# 更新 Xray 内核
 update_xray() {
     clear
     echo -e "${CYAN}═══════════════════ 更新 Xray ═══════════════════${NC}"
+    echo ""
     
     local current=$("$DIR/bin/xray" version 2>/dev/null | head -1 | awk '{print $2}')
     local latest=$(curl -sL --max-time 10 https://api.github.com/repos/XTLS/Xray-core/releases/latest | grep '"tag_name"' | head -1 | cut -d'"' -f4)
     
     echo -e "当前版本: ${YELLOW}${current:-未知}${NC}"
     echo -e "最新版本: ${GREEN}${latest:-获取失败}${NC}"
+    echo ""
     
     if [ -z "$latest" ]; then
         echo -e "${RED}无法获取最新版本信息${NC}"
@@ -965,10 +1094,11 @@ update_xray() {
         case "$arch" in
             x86_64) arch="64" ;;
             aarch64) arch="arm64-v8a" ;;
+            armv7l) arch="arm32-v7a" ;;
             *) echo -e "${RED}不支持的架构: $arch${NC}"; sleep 3; return ;;
         esac
         
-        echo -e "${BLUE}下载中...${NC}"
+        echo -e "${BLUE}正在下载...${NC}"
         cd "$DIR"
         
         if wget -q --show-progress -O xray.zip "https://github.com/XTLS/Xray-core/releases/download/${latest}/Xray-linux-${arch}.zip"; then
@@ -985,6 +1115,7 @@ update_xray() {
     sleep 3
 }
 
+# 卸载服务
 uninstall() {
     clear
     echo -e "${RED}╔═══════════════════════════════════════════════════════════════╗${NC}"
@@ -997,17 +1128,20 @@ uninstall() {
     read confirm
     
     if [ "$confirm" = "yes" ]; then
+        echo ""
         echo -e "${BLUE}正在卸载...${NC}"
+        
         systemctl stop $SERVICE 2>/dev/null
         systemctl disable $SERVICE 2>/dev/null
         rm -f /etc/systemd/system/${SERVICE}.service
         rm -rf "$DIR"
         rm -f /usr/local/bin/xray-v6
         systemctl daemon-reload
+        
         echo -e "${GREEN}卸载完成${NC}"
         exit 0
     else
-        echo -e "${GREEN}已取消${NC}"
+        echo -e "${GREEN}已取消卸载${NC}"
     fi
     sleep 2
 }
@@ -1056,14 +1190,15 @@ print_banner() {
     clear
     echo -e "${CYAN}"
     echo "╔═══════════════════════════════════════════════════════════════╗"
-    echo "║          VLESS + SOCKS5 四合一安装脚本 v8.2                  ║"
+    echo "║          VLESS + SOCKS5 四合一安装脚本 v${SCRIPT_VERSION}                  ║"
     echo "╠═══════════════════════════════════════════════════════════════╣"
     echo "║  1. SOCKS5 - 仅 IPv4 出站                                    ║"
     echo "║  2. SOCKS5 - 仅 IPv6 出站                                    ║"
     echo "║  3. VLESS  - 仅 IPv4 出站（CF CDN）                          ║"
     echo "║  4. VLESS  - 仅 IPv6 出站（CF CDN）                          ║"
     echo "║                                                               ║"
-    echo "║  所有入站支持 IPv4/IPv6 双栈接入                             ║"
+    echo "║  ✅ 所有入站支持 IPv4/IPv6 双栈接入                          ║"
+    echo "║  ✅ 内置 WebRTC/STUN 拦截防止 IP 泄露                        ║"
     echo "║  安装后使用 xray-v6 命令管理                                 ║"
     echo "╚═══════════════════════════════════════════════════════════════╝"
     echo -e "${NC}"
@@ -1114,7 +1249,7 @@ check_network() {
     fi
     
     if [ -z "$VPS_IP" ]; then
-        print_error "无法获取 VPS IPv4 地址"
+        print_error "无法自动获取 VPS IPv4 地址"
         echo -n "请手动输入 VPS IPv4: "
         read VPS_IP
         [ -z "$VPS_IP" ] && exit 1
@@ -1144,7 +1279,7 @@ install_deps() {
     elif command -v dnf &>/dev/null; then
         dnf install -y curl wget unzip socat cronie openssl >/dev/null 2>&1
     else
-        print_warning "未知包管理器，请手动安装依赖"
+        print_warning "未知包管理器，请确保已安装: curl wget unzip socat openssl"
     fi
     
     print_success "依赖安装完成"
@@ -1204,11 +1339,12 @@ get_user_input() {
     
     echo ""
     echo -e "${CYAN}═══════════════════════════════════════════════════════════════${NC}"
-    echo -e "  域名:      ${YELLOW}$DOMAIN${NC}"
-    echo -e "  邮箱:      ${YELLOW}$EMAIL${NC}"
-    echo -e "  IPv4:      ${YELLOW}$VPS_IP${NC}"
-    echo -e "  IPv6:      ${YELLOW}${IPV6_ADDR:-无}${NC}"
-    echo -e "  优选地址:  ${YELLOW}$CDN_HOST${NC}"
+    echo -e "  域名:       ${YELLOW}$DOMAIN${NC}"
+    echo -e "  邮箱:       ${YELLOW}$EMAIL${NC}"
+    echo -e "  IPv4:       ${YELLOW}$VPS_IP${NC}"
+    echo -e "  IPv6:       ${YELLOW}${IPV6_ADDR:-无}${NC}"
+    echo -e "  优选地址:   ${YELLOW}$CDN_HOST${NC}"
+    echo -e "  WebRTC拦截: ${GREEN}✅ 将自动启用${NC}"
     echo -e "${CYAN}═══════════════════════════════════════════════════════════════${NC}"
     echo ""
     
@@ -1269,12 +1405,12 @@ install_cert() {
     
     # 1. 检查本地已有证书
     if [ -f "$INSTALL_DIR/cert/fullchain.crt" ] && [ -f "$INSTALL_DIR/cert/private.key" ]; then
-        # 验证证书是否有效
+        # 验证证书是否有效（未过期）
         if openssl x509 -checkend 86400 -noout -in "$INSTALL_DIR/cert/fullchain.crt" 2>/dev/null; then
             print_success "使用已有证书"
             return 0
         else
-            print_warning "现有证书已过期或即将过期，重新申请"
+            print_warning "现有证书已过期或即将过期，将重新申请"
             rm -f "$INSTALL_DIR/cert/fullchain.crt" "$INSTALL_DIR/cert/private.key"
         fi
     fi
