@@ -36,13 +36,13 @@
 ## 📥 一键安装
 
 ```bash
-bash <(curl -sL https://raw.githubusercontent.com/shuang-wanna123/xray-v6-manager/main/install.sh)
+bash <(curl -sL https://raw.githubusercontent.com/shuang-wanna123/xray-v6-manager/main/xray-v4v6s5.sh)
 ```
 
 或
 
 ```bash
-wget -O install.sh https://raw.githubusercontent.com/shuang-wanna123/xray-v6-manager/main/install.sh && bash install.sh
+wget -O install.sh https://raw.githubusercontent.com/shuang-wanna123/xray-v6-manager/main/install.sh && bash xray-v4v6s5.sh
 ```
 
 ## 🎛️ 管理命令
