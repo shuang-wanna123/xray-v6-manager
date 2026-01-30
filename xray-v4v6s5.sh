@@ -1,11 +1,11 @@
 #!/bin/bash
 
 #===============================================================================
-# VLESS + SOCKS5 四合一安装脚本 v8.0
+# VLESS + SOCKS5 四合一安装脚本 v8.1
 # 1. SOCKS5 - 仅 IPv4 出站
 # 2. SOCKS5 - 仅 IPv6 出站
-# 3. VLESS  - 仅 IPv4 出站（支持 CF CDN）
-# 4. VLESS  - 仅 IPv6 出站（支持 CF CDN）
+# 3. VLESS  - 仅 IPv4 出站（CF CDN）
+# 4. VLESS  - 仅 IPv6 出站（CF CDN）
 # 所有入站支持 IPv4/IPv6 双栈接入
 # 管理命令: xray-v6
 #===============================================================================
@@ -22,6 +22,40 @@ SERVICE_NAME="xray-v6"
 PARAMS_FILE="$INSTALL_DIR/params.conf"
 CDN_HOST="visa.com"
 
+# 全局变量
+OS=""
+ARCH=""
+XRAY_ARCH=""
+VPS_IP=""
+IPV6_ADDR=""
+HAS_IPV6="false"
+DOMAIN=""
+EMAIL=""
+UUID=""
+
+# 节点参数
+SOCKS5_V4_ENABLED=""
+SOCKS5_V4_PORT=""
+SOCKS5_V4_USER=""
+SOCKS5_V4_PASS=""
+
+SOCKS5_V6_ENABLED=""
+SOCKS5_V6_PORT=""
+SOCKS5_V6_USER=""
+SOCKS5_V6_PASS=""
+
+VLESS_V4_ENABLED=""
+VLESS_V4_PORT=""
+VLESS_V4_PATH=""
+
+VLESS_V6_ENABLED=""
+VLESS_V6_PORT=""
+VLESS_V6_PATH=""
+
+#===============================================================================
+# 工具函数
+#===============================================================================
+
 print_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
 print_success() { echo -e "${GREEN}[OK]${NC} $1"; }
 print_warning() { echo -e "${YELLOW}[WARN]${NC} $1"; }
@@ -32,8 +66,9 @@ print_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 #===============================================================================
 
 save_params() {
+    mkdir -p "$INSTALL_DIR"
     cat > "$PARAMS_FILE" << EOF
-# Xray 配置参数 v8.0
+# Xray 配置参数 v8.1 - $(date)
 DOMAIN="$DOMAIN"
 EMAIL="$EMAIL"
 UUID="$UUID"
@@ -78,16 +113,10 @@ load_params() {
 # 配置生成
 #===============================================================================
 
-regenerate_config() {
-    load_params || { print_error "参数文件不存在"; return 1; }
-    
+generate_xray_config() {
     local config_file="$INSTALL_DIR/config/config.json"
     local inbounds=""
-    local outbounds=""
-    local rules=""
     local first=true
-    
-    # ===== 构建 Inbounds =====
     
     # SOCKS5-IPv4
     if [ "$SOCKS5_V4_ENABLED" = "true" ]; then
@@ -181,32 +210,17 @@ regenerate_config() {
         first=false
     fi
     
-    # ===== 构建 Outbounds =====
-    outbounds='{
-      "tag": "IPv4-out",
-      "protocol": "freedom",
-      "settings": {"domainStrategy": "UseIPv4"},
-      "sendThrough": "'"$VPS_IP"'"
-    }'
+    # Outbounds
+    local outbounds='{"tag":"IPv4-out","protocol":"freedom","settings":{"domainStrategy":"UseIPv4"},"sendThrough":"'$VPS_IP'"}'
     
     if [ "$HAS_IPV6" = "true" ]; then
-        outbounds+=',
-    {
-      "tag": "IPv6-out",
-      "protocol": "freedom",
-      "settings": {"domainStrategy": "UseIPv6"},
-      "sendThrough": "'"$IPV6_ADDR"'"
-    }'
+        outbounds+=',{"tag":"IPv6-out","protocol":"freedom","settings":{"domainStrategy":"UseIPv6"},"sendThrough":"'$IPV6_ADDR'"}'
     fi
     
-    outbounds+=',
-    {"tag": "direct", "protocol": "freedom"},
-    {"tag": "block", "protocol": "blackhole"}'
+    outbounds+=',{"tag":"direct","protocol":"freedom"},{"tag":"block","protocol":"blackhole"}'
     
-    # ===== 构建 Routing Rules =====
-    local v4_tags=""
-    local v6_tags=""
-    
+    # Routing rules
+    local v4_tags="" v6_tags=""
     [ "$SOCKS5_V4_ENABLED" = "true" ] && v4_tags='"socks-v4-in"'
     [ "$VLESS_V4_ENABLED" = "true" ] && { [ -n "$v4_tags" ] && v4_tags+=","; v4_tags+='"vless-v4-in"'; }
     
@@ -215,22 +229,14 @@ regenerate_config() {
         [ "$VLESS_V6_ENABLED" = "true" ] && { [ -n "$v6_tags" ] && v6_tags+=","; v6_tags+='"vless-v6-in"'; }
     fi
     
+    local rules=""
     first=true
-    if [ -n "$v4_tags" ]; then
-        rules+='{"type": "field", "inboundTag": ['"$v4_tags"'], "outboundTag": "IPv4-out"}'
-        first=false
-    fi
-    
-    if [ -n "$v6_tags" ]; then
-        [ "$first" = "false" ] && rules+=","
-        rules+='{"type": "field", "inboundTag": ['"$v6_tags"'], "outboundTag": "IPv6-out"}'
-        first=false
-    fi
-    
+    [ -n "$v4_tags" ] && { rules='{"type":"field","inboundTag":['$v4_tags'],"outboundTag":"IPv4-out"}'; first=false; }
+    [ -n "$v6_tags" ] && { [ "$first" = "false" ] && rules+=","; rules+='{"type":"field","inboundTag":['$v6_tags'],"outboundTag":"IPv6-out"}'; first=false; }
     [ "$first" = "false" ] && rules+=","
-    rules+='{"type": "field", "outboundTag": "block", "protocol": ["bittorrent"]}'
+    rules+='{"type":"field","outboundTag":"block","protocol":["bittorrent"]}'
     
-    # ===== 生成配置文件 =====
+    # 写入配置文件
     cat > "$config_file" << EOFCONFIG
 {
   "log": {
@@ -240,14 +246,10 @@ regenerate_config() {
   },
   "inbounds": [$inbounds
   ],
-  "outbounds": [
-    $outbounds
-  ],
+  "outbounds": [$outbounds],
   "routing": {
     "domainStrategy": "AsIs",
-    "rules": [
-      $rules
-    ]
+    "rules": [$rules]
   }
 }
 EOFCONFIG
@@ -257,31 +259,21 @@ EOFCONFIG
     return $?
 }
 
-#===============================================================================
-# 信息生成
-#===============================================================================
-
-regenerate_info() {
-    load_params || return 1
-    
+generate_info() {
     local info_file="$INSTALL_DIR/info.txt"
-    local encoded_v4_path=$(echo "$VLESS_V4_PATH" | sed 's/\//%2F/g')
-    local encoded_v6_path=$(echo "$VLESS_V6_PATH" | sed 's/\//%2F/g')
+    local ep4=$(echo "$VLESS_V4_PATH" | sed 's/\//%2F/g')
+    local ep6=$(echo "$VLESS_V6_PATH" | sed 's/\//%2F/g')
     
-    cat > "$info_file" << 'EOFHEADER'
+    cat > "$info_file" << EOF
 
 ╔═══════════════════════════════════════════════════════════════════════════════╗
-║                      四合一代理节点配置信息 v8.0                              ║
+║                      四合一代理节点配置信息 v8.1                              ║
 ║                     所有入站支持 IPv4/IPv6 双栈接入                           ║
 ╚═══════════════════════════════════════════════════════════════════════════════╝
 
-EOFHEADER
-
-    cat >> "$info_file" << EOF
 ═══════════════════════════════════════════════════════════════════════════════
                                  基本信息
 ═══════════════════════════════════════════════════════════════════════════════
-
   VPS IPv4:   $VPS_IP
   VPS IPv6:   ${IPV6_ADDR:-无}
   域名:       $DOMAIN
@@ -295,26 +287,19 @@ EOF
     if [ "$SOCKS5_V4_ENABLED" = "true" ]; then
         cat >> "$info_file" << EOF
 ═══════════════════════════════════════════════════════════════════════════════
-        节点 1: SOCKS5-IPv4（端口 $SOCKS5_V4_PORT，强制 IPv4 出站）
+        节点 1: SOCKS5-IPv4（端口 $SOCKS5_V4_PORT） ✅ 已启用
 ═══════════════════════════════════════════════════════════════════════════════
-
-  状态:   ✅ 已启用
-  端口:   $SOCKS5_V4_PORT
-  用户名: $SOCKS5_V4_USER
-  密码:   $SOCKS5_V4_PASS
-  出站:   $VPS_IP
+  出站: 强制 IPv4 → $VPS_IP
 
   链接:
 socks5://${SOCKS5_V4_USER}:${SOCKS5_V4_PASS}@${VPS_IP}:${SOCKS5_V4_PORT}
 
 EOF
     else
-        cat >> "$info_file" << EOF
-═══════════════════════════════════════════════════════════════════════════════
-        节点 1: SOCKS5-IPv4（❌ 已禁用）
-═══════════════════════════════════════════════════════════════════════════════
-
-EOF
+        echo "═══════════════════════════════════════════════════════════════════════════════" >> "$info_file"
+        echo "        节点 1: SOCKS5-IPv4 ❌ 已禁用" >> "$info_file"
+        echo "═══════════════════════════════════════════════════════════════════════════════" >> "$info_file"
+        echo "" >> "$info_file"
     fi
 
     # SOCKS5-IPv6
@@ -322,59 +307,44 @@ EOF
         if [ "$SOCKS5_V6_ENABLED" = "true" ]; then
             cat >> "$info_file" << EOF
 ═══════════════════════════════════════════════════════════════════════════════
-        节点 2: SOCKS5-IPv6（端口 $SOCKS5_V6_PORT，强制 IPv6 出站）
+        节点 2: SOCKS5-IPv6（端口 $SOCKS5_V6_PORT） ✅ 已启用
 ═══════════════════════════════════════════════════════════════════════════════
-
-  状态:   ✅ 已启用
-  端口:   $SOCKS5_V6_PORT
-  用户名: $SOCKS5_V6_USER
-  密码:   $SOCKS5_V6_PASS
-  出站:   $IPV6_ADDR
+  出站: 强制 IPv6 → $IPV6_ADDR
 
   链接:
 socks5://${SOCKS5_V6_USER}:${SOCKS5_V6_PASS}@${VPS_IP}:${SOCKS5_V6_PORT}
 
 EOF
         else
-            cat >> "$info_file" << EOF
-═══════════════════════════════════════════════════════════════════════════════
-        节点 2: SOCKS5-IPv6（❌ 已禁用）
-═══════════════════════════════════════════════════════════════════════════════
-
-EOF
+            echo "═══════════════════════════════════════════════════════════════════════════════" >> "$info_file"
+            echo "        节点 2: SOCKS5-IPv6 ❌ 已禁用" >> "$info_file"
+            echo "═══════════════════════════════════════════════════════════════════════════════" >> "$info_file"
+            echo "" >> "$info_file"
         fi
     else
-        cat >> "$info_file" << EOF
-═══════════════════════════════════════════════════════════════════════════════
-        节点 2: SOCKS5-IPv6（❌ 不可用 - VPS 无 IPv6）
-═══════════════════════════════════════════════════════════════════════════════
-
-EOF
+        echo "═══════════════════════════════════════════════════════════════════════════════" >> "$info_file"
+        echo "        节点 2: SOCKS5-IPv6 ⚠️ 不可用（VPS 无 IPv6）" >> "$info_file"
+        echo "═══════════════════════════════════════════════════════════════════════════════" >> "$info_file"
+        echo "" >> "$info_file"
     fi
 
     # VLESS-IPv4
     if [ "$VLESS_V4_ENABLED" = "true" ]; then
         cat >> "$info_file" << EOF
 ═══════════════════════════════════════════════════════════════════════════════
-        节点 3: VLESS-IPv4（端口 $VLESS_V4_PORT，强制 IPv4 出站）
+        节点 3: VLESS-IPv4（端口 $VLESS_V4_PORT） ✅ 已启用
 ═══════════════════════════════════════════════════════════════════════════════
-
-  状态:   ✅ 已启用
-  端口:   $VLESS_V4_PORT (CF 支持)
-  路径:   $VLESS_V4_PATH
-  出站:   $VPS_IP
+  出站: 强制 IPv4 → $VPS_IP
 
   CF CDN 链接:
-vless://${UUID}@${CDN_HOST}:${VLESS_V4_PORT}?encryption=none&security=tls&sni=${DOMAIN}&type=ws&host=${DOMAIN}&path=${encoded_v4_path}#VLESS-IPv4-CDN
+vless://${UUID}@${CDN_HOST}:${VLESS_V4_PORT}?encryption=none&security=tls&sni=${DOMAIN}&type=ws&host=${DOMAIN}&path=${ep4}#VLESS-IPv4
 
 EOF
     else
-        cat >> "$info_file" << EOF
-═══════════════════════════════════════════════════════════════════════════════
-        节点 3: VLESS-IPv4（❌ 已禁用）
-═══════════════════════════════════════════════════════════════════════════════
-
-EOF
+        echo "═══════════════════════════════════════════════════════════════════════════════" >> "$info_file"
+        echo "        节点 3: VLESS-IPv4 ❌ 已禁用" >> "$info_file"
+        echo "═══════════════════════════════════════════════════════════════════════════════" >> "$info_file"
+        echo "" >> "$info_file"
     fi
 
     # VLESS-IPv6
@@ -382,35 +352,28 @@ EOF
         if [ "$VLESS_V6_ENABLED" = "true" ]; then
             cat >> "$info_file" << EOF
 ═══════════════════════════════════════════════════════════════════════════════
-        节点 4: VLESS-IPv6（端口 $VLESS_V6_PORT，强制 IPv6 出站）
+        节点 4: VLESS-IPv6（端口 $VLESS_V6_PORT） ✅ 已启用
 ═══════════════════════════════════════════════════════════════════════════════
-
-  状态:   ✅ 已启用
-  端口:   $VLESS_V6_PORT (CF 支持)
-  路径:   $VLESS_V6_PATH
-  出站:   $IPV6_ADDR
+  出站: 强制 IPv6 → $IPV6_ADDR
 
   CF CDN 链接:
-vless://${UUID}@${CDN_HOST}:${VLESS_V6_PORT}?encryption=none&security=tls&sni=${DOMAIN}&type=ws&host=${DOMAIN}&path=${encoded_v6_path}#VLESS-IPv6-CDN
+vless://${UUID}@${CDN_HOST}:${VLESS_V6_PORT}?encryption=none&security=tls&sni=${DOMAIN}&type=ws&host=${DOMAIN}&path=${ep6}#VLESS-IPv6
 
 EOF
         else
-            cat >> "$info_file" << EOF
-═══════════════════════════════════════════════════════════════════════════════
-        节点 4: VLESS-IPv6（❌ 已禁用）
-═══════════════════════════════════════════════════════════════════════════════
-
-EOF
+            echo "═══════════════════════════════════════════════════════════════════════════════" >> "$info_file"
+            echo "        节点 4: VLESS-IPv6 ❌ 已禁用" >> "$info_file"
+            echo "═══════════════════════════════════════════════════════════════════════════════" >> "$info_file"
+            echo "" >> "$info_file"
         fi
     else
-        cat >> "$info_file" << EOF
-═══════════════════════════════════════════════════════════════════════════════
-        节点 4: VLESS-IPv6（❌ 不可用 - VPS 无 IPv6）
-═══════════════════════════════════════════════════════════════════════════════
-
-EOF
+        echo "═══════════════════════════════════════════════════════════════════════════════" >> "$info_file"
+        echo "        节点 4: VLESS-IPv6 ⚠️ 不可用（VPS 无 IPv6）" >> "$info_file"
+        echo "═══════════════════════════════════════════════════════════════════════════════" >> "$info_file"
+        echo "" >> "$info_file"
     fi
 
+    # 使用说明
     cat >> "$info_file" << EOF
 ═══════════════════════════════════════════════════════════════════════════════
                               使用说明
@@ -429,15 +392,13 @@ EOF
     [ "$VLESS_V4_ENABLED" = "true" ] && echo "    ufw allow $VLESS_V4_PORT/tcp" >> "$info_file"
     [ "$VLESS_V6_ENABLED" = "true" ] && [ "$HAS_IPV6" = "true" ] && echo "    ufw allow $VLESS_V6_PORT/tcp" >> "$info_file"
 
-    cat >> "$info_file" << EOF
-
-═══════════════════════════════════════════════════════════════════════════════
-
-EOF
+    echo "" >> "$info_file"
+    echo "═══════════════════════════════════════════════════════════════════════════════" >> "$info_file"
+    echo "" >> "$info_file"
 }
 
 #===============================================================================
-# 管理脚本
+# 管理脚本生成
 #===============================================================================
 
 create_management() {
@@ -456,10 +417,16 @@ SERVICE="xray-v6"
 PARAMS_FILE="$DIR/params.conf"
 CDN_HOST="visa.com"
 
+# 加载参数
 load_params() {
-    [ -f "$PARAMS_FILE" ] && source "$PARAMS_FILE"
+    if [ -f "$PARAMS_FILE" ]; then
+        source "$PARAMS_FILE"
+        return 0
+    fi
+    return 1
 }
 
+# 保存参数
 save_params() {
     cat > "$PARAMS_FILE" << EOF
 DOMAIN="$DOMAIN"
@@ -483,16 +450,21 @@ VLESS_V6_ENABLED="$VLESS_V6_ENABLED"
 VLESS_V6_PORT="$VLESS_V6_PORT"
 VLESS_V6_PATH="$VLESS_V6_PATH"
 EOF
+    chmod 600 "$PARAMS_FILE"
 }
 
+# 重新生成所有配置
 regenerate_all() {
     load_params
     
-    # 生成 config.json
-    local inbounds="" outbounds="" rules=""
-    local first=true
+    if [ -z "$UUID" ]; then
+        echo -e "${RED}错误: UUID 为空${NC}"
+        return 1
+    fi
     
-    # Inbounds
+    # ========== 生成 config.json ==========
+    local inbounds="" first=true
+    
     if [ "$SOCKS5_V4_ENABLED" = "true" ]; then
         [ "$first" = "false" ] && inbounds+=","
         inbounds+='{"tag":"socks-v4-in","listen":"::","port":'$SOCKS5_V4_PORT',"protocol":"socks","settings":{"auth":"password","accounts":[{"user":"'$SOCKS5_V4_USER'","pass":"'$SOCKS5_V4_PASS'"}],"udp":true}}'
@@ -517,19 +489,17 @@ regenerate_all() {
         first=false
     fi
     
-    # Outbounds
-    outbounds='{"tag":"IPv4-out","protocol":"freedom","settings":{"domainStrategy":"UseIPv4"},"sendThrough":"'$VPS_IP'"}'
+    local outbounds='{"tag":"IPv4-out","protocol":"freedom","settings":{"domainStrategy":"UseIPv4"},"sendThrough":"'$VPS_IP'"}'
     [ "$HAS_IPV6" = "true" ] && outbounds+=',{"tag":"IPv6-out","protocol":"freedom","settings":{"domainStrategy":"UseIPv6"},"sendThrough":"'$IPV6_ADDR'"}'
     outbounds+=',{"tag":"direct","protocol":"freedom"},{"tag":"block","protocol":"blackhole"}'
     
-    # Rules
     local v4="" v6=""
     [ "$SOCKS5_V4_ENABLED" = "true" ] && v4='"socks-v4-in"'
     [ "$VLESS_V4_ENABLED" = "true" ] && { [ -n "$v4" ] && v4+=","; v4+='"vless-v4-in"'; }
     [ "$SOCKS5_V6_ENABLED" = "true" ] && [ "$HAS_IPV6" = "true" ] && v6='"socks-v6-in"'
     [ "$VLESS_V6_ENABLED" = "true" ] && [ "$HAS_IPV6" = "true" ] && { [ -n "$v6" ] && v6+=","; v6+='"vless-v6-in"'; }
     
-    first=true
+    local rules="" first=true
     [ -n "$v4" ] && { rules='{"type":"field","inboundTag":['$v4'],"outboundTag":"IPv4-out"}'; first=false; }
     [ -n "$v6" ] && { [ "$first" = "false" ] && rules+=","; rules+='{"type":"field","inboundTag":['$v6'],"outboundTag":"IPv6-out"}'; first=false; }
     [ "$first" = "false" ] && rules+=","
@@ -539,14 +509,14 @@ regenerate_all() {
 {"log":{"loglevel":"warning","access":"$DIR/log/access.log","error":"$DIR/log/error.log"},"inbounds":[$inbounds],"outbounds":[$outbounds],"routing":{"domainStrategy":"AsIs","rules":[$rules]}}
 EOFCFG
 
-    # 生成 info.txt
+    # ========== 生成 info.txt ==========
     local ep4=$(echo "$VLESS_V4_PATH" | sed 's/\//%2F/g')
     local ep6=$(echo "$VLESS_V6_PATH" | sed 's/\//%2F/g')
     
     cat > "$DIR/info.txt" << EOFINFO
 
 ╔═══════════════════════════════════════════════════════════════════════════════╗
-║                      四合一代理节点配置信息 v8.0                              ║
+║                      四合一代理节点配置信息 v8.1                              ║
 ╚═══════════════════════════════════════════════════════════════════════════════╝
 
 ═══════════════════════════════════════════════════════════════════════════════
@@ -606,14 +576,17 @@ EOFINFO
     fi
 
     echo "═══════════════════════════════════════════════════════════════════════════════" >> "$DIR/info.txt"
+    
+    return 0
 }
 
+# 显示菜单
 show_menu() {
     clear
     load_params
     echo -e "${CYAN}"
     echo "╔═══════════════════════════════════════════════════════════════╗"
-    echo "║            Xray 四合一代理 管理面板 v8.0                     ║"
+    echo "║            Xray 四合一代理 管理面板 v8.1                     ║"
     echo "╚═══════════════════════════════════════════════════════════════╝"
     echo -e "${NC}"
     
@@ -623,7 +596,7 @@ show_menu() {
         echo -e "  服务状态: ${RED}● 已停止${NC}"
     fi
     
-    echo -e "  UUID: ${YELLOW}${UUID:0:8}...${NC}"
+    echo -e "  UUID: ${YELLOW}${UUID:0:8}...${UUID: -4}${NC}"
     echo ""
     echo -e "${CYAN}─────────────────── 服务管理 ───────────────────${NC}"
     echo -e "  ${GREEN}1.${NC} 查看节点信息"
@@ -766,7 +739,7 @@ toggle_node() {
         1) [ "$SOCKS5_V4_ENABLED" = "true" ] && SOCKS5_V4_ENABLED="false" || SOCKS5_V4_ENABLED="true" ;;
         2) 
             if [ "$HAS_IPV6" != "true" ]; then
-                echo -e "${RED}VPS 无 IPv6，无法启用${NC}"
+                echo -e "${RED}VPS 无 IPv6${NC}"
                 sleep 2
                 return
             fi
@@ -775,7 +748,7 @@ toggle_node() {
         3) [ "$VLESS_V4_ENABLED" = "true" ] && VLESS_V4_ENABLED="false" || VLESS_V4_ENABLED="true" ;;
         4)
             if [ "$HAS_IPV6" != "true" ]; then
-                echo -e "${RED}VPS 无 IPv6，无法启用${NC}"
+                echo -e "${RED}VPS 无 IPv6${NC}"
                 sleep 2
                 return
             fi
@@ -898,6 +871,7 @@ EOFMANAGE
 
     chmod +x "$INSTALL_DIR/manage.sh"
     ln -sf "$INSTALL_DIR/manage.sh" /usr/local/bin/xray-v6
+    print_success "管理脚本创建完成"
 }
 
 #===============================================================================
@@ -908,7 +882,7 @@ print_banner() {
     clear
     echo -e "${CYAN}"
     echo "╔═══════════════════════════════════════════════════════════════╗"
-    echo "║          VLESS + SOCKS5 四合一安装脚本 v8.0                  ║"
+    echo "║          VLESS + SOCKS5 四合一安装脚本 v8.1                  ║"
     echo "╠═══════════════════════════════════════════════════════════════╣"
     echo "║  1. SOCKS5 - 仅 IPv4 出站                                    ║"
     echo "║  2. SOCKS5 - 仅 IPv6 出站                                    ║"
@@ -959,9 +933,12 @@ check_network() {
 
 install_deps() {
     print_info "安装依赖..."
-    apt-get update -y >/dev/null 2>&1
-    apt-get install -y curl wget unzip socat cron openssl >/dev/null 2>&1 || \
-    yum install -y curl wget unzip socat cronie openssl >/dev/null 2>&1
+    if command -v apt-get &>/dev/null; then
+        apt-get update -y >/dev/null 2>&1
+        apt-get install -y curl wget unzip socat cron openssl >/dev/null 2>&1
+    else
+        yum install -y curl wget unzip socat cronie openssl >/dev/null 2>&1
+    fi
     print_success "依赖安装完成"
 }
 
@@ -1018,12 +995,14 @@ get_user_input() {
     echo ""
     echo -n "确认安装？(y/n): "
     read c
-    [ "$c" != "y" ] && exit 0
+    [ "$c" != "y" ] && [ "$c" != "Y" ] && exit 0
 }
 
 create_dirs() {
+    print_info "创建目录..."
     mkdir -p "$INSTALL_DIR"/{bin,config,cert,log,data}
     touch "$INSTALL_DIR/log/"{access,error}.log
+    print_success "目录创建完成"
 }
 
 download_xray() {
@@ -1031,17 +1010,25 @@ download_xray() {
     cd "$INSTALL_DIR"
     
     LATEST=$(curl -sL https://api.github.com/repos/XTLS/Xray-core/releases/latest | grep '"tag_name"' | head -1 | cut -d'"' -f4)
-    [ -z "$LATEST" ] && LATEST="v1.8.4"
+    [ -z "$LATEST" ] && LATEST="v24.11.21"
+    
+    print_info "版本: $LATEST"
     
     wget -q --show-progress -O xray.zip "https://github.com/XTLS/Xray-core/releases/download/${LATEST}/Xray-linux-${XRAY_ARCH}.zip"
+    [ $? -ne 0 ] && { print_error "下载失败"; exit 1; }
+    
     unzip -o xray.zip -d bin/ >/dev/null 2>&1
     rm -f xray.zip
     chmod +x bin/xray
     
+    # 生成 UUID
     UUID=$("$INSTALL_DIR/bin/xray" uuid)
+    print_success "UUID: $UUID"
     
-    wget -q -O data/geoip.dat "https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat"
-    wget -q -O data/geosite.dat "https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat"
+    # 下载规则文件
+    print_info "下载规则文件..."
+    wget -q -O data/geoip.dat "https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat" 2>/dev/null
+    wget -q -O data/geosite.dat "https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat" 2>/dev/null
     
     print_success "Xray 下载完成"
 }
@@ -1055,7 +1042,7 @@ install_cert() {
         return 0
     fi
     
-    # 2. 检查 acme.sh 已申请的 ECC 证书
+    # 2. 检查 acme.sh ECC 证书
     if [ -f ~/.acme.sh/${DOMAIN}_ecc/fullchain.cer ] && [ -f ~/.acme.sh/${DOMAIN}_ecc/${DOMAIN}.key ]; then
         print_info "发现 acme.sh 已有证书，直接安装..."
         mkdir -p "$INSTALL_DIR/cert"
@@ -1071,9 +1058,9 @@ install_cert() {
         return 0
     fi
     
-    # 3. 检查 acme.sh 已申请的 RSA 证书
+    # 3. 检查 acme.sh RSA 证书
     if [ -f ~/.acme.sh/${DOMAIN}/fullchain.cer ] && [ -f ~/.acme.sh/${DOMAIN}/${DOMAIN}.key ]; then
-        print_info "发现 acme.sh 已有证书（RSA），直接安装..."
+        print_info "发现 acme.sh RSA 证书..."
         mkdir -p "$INSTALL_DIR/cert"
         cp ~/.acme.sh/${DOMAIN}/fullchain.cer "$INSTALL_DIR/cert/fullchain.crt"
         cp ~/.acme.sh/${DOMAIN}/${DOMAIN}.key "$INSTALL_DIR/cert/private.key"
@@ -1113,6 +1100,8 @@ install_cert() {
 }
 
 init_params() {
+    print_info "初始化参数..."
+    
     # SOCKS5-IPv4
     SOCKS5_V4_ENABLED="true"
     SOCKS5_V4_PORT=$((RANDOM % 10000 + 15000))
@@ -1135,10 +1124,21 @@ init_params() {
     VLESS_V6_PORT=2083
     VLESS_V6_PATH="/$(head /dev/urandom | tr -dc 'a-z0-9' | head -c 8)"
     
+    # 确保 UUID 存在
+    if [ -z "$UUID" ]; then
+        UUID=$("$INSTALL_DIR/bin/xray" uuid)
+        print_warning "重新生成 UUID: $UUID"
+    fi
+    
+    # 保存参数
     save_params
+    
+    print_success "参数初始化完成"
 }
 
 create_service() {
+    print_info "创建系统服务..."
+    
     cat > /etc/systemd/system/${SERVICE_NAME}.service << EOF
 [Unit]
 Description=Xray Service
@@ -1159,6 +1159,8 @@ EOF
 
     systemctl daemon-reload
     systemctl enable $SERVICE_NAME >/dev/null 2>&1
+    
+    print_success "服务创建完成"
 }
 
 show_result() {
@@ -1173,6 +1175,10 @@ show_result() {
     echo ""
 }
 
+#===============================================================================
+# 主函数
+#===============================================================================
+
 main() {
     print_banner
     check_root
@@ -1180,22 +1186,43 @@ main() {
     check_network
     get_user_input
     
-    print_info "开始安装..."
+    echo ""
+    print_info "========== 开始安装 =========="
+    echo ""
+    
     install_deps
     cleanup_old
     create_dirs
     download_xray
     install_cert
     init_params
-    regenerate_config
-    regenerate_info
+    
+    # 生成配置（此时所有变量都已在内存中）
+    print_info "生成配置文件..."
+    generate_xray_config || { print_error "配置生成失败"; exit 1; }
+    print_success "配置生成完成"
+    
+    # 生成信息文件
+    print_info "生成节点信息..."
+    generate_info
+    print_success "信息生成完成"
+    
     create_service
     create_management
     
+    # 启动服务
+    print_info "启动服务..."
     systemctl start $SERVICE_NAME
     sleep 2
+    
+    if systemctl is-active --quiet $SERVICE_NAME; then
+        print_success "服务启动成功"
+    else
+        print_error "服务启动失败"
+        journalctl -u $SERVICE_NAME --no-pager -n 10
+    fi
     
     show_result
 }
 
-main
+main "$@"
