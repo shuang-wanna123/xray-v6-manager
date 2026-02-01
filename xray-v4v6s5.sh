@@ -522,7 +522,18 @@ download_xray() {
 
 install_cert() {
     print_info "检查证书..."
-    [ -f "$INSTALL_DIR/cert/fullchain.crt" ] && [ -f "$INSTALL_DIR/cert/private.key" ] && openssl x509 -checkend 86400 -noout -in "$INSTALL_DIR/cert/fullchain.crt" 2>/dev/null && { print_success "使用已有证书"; return 0; }
+    # 检查证书是否存在、未过期、且匹配当前域名
+    if [ -f "$INSTALL_DIR/cert/fullchain.crt" ] && [ -f "$INSTALL_DIR/cert/private.key" ]; then
+        local cert_domain=$(openssl x509 -noout -subject -in "$INSTALL_DIR/cert/fullchain.crt" 2>/dev/null | grep -oP '(?<=CN ?= ?)[^,]+' | head -1)
+        if [ "$cert_domain" = "$DOMAIN" ] && openssl x509 -checkend 86400 -noout -in "$INSTALL_DIR/cert/fullchain.crt" 2>/dev/null; then
+            print_success "使用已有证书 ($cert_domain)"
+            return 0
+        else
+            print_warning "证书不匹配或已过期，重新申请 (证书:${cert_domain:-无} 域名:$DOMAIN)"
+            rm -f "$INSTALL_DIR/cert/fullchain.crt" "$INSTALL_DIR/cert/private.key"
+        fi
+    fi
+
     [ -f ~/.acme.sh/${DOMAIN}_ecc/fullchain.cer ] && { print_info "使用acme.sh证书..."; mkdir -p "$INSTALL_DIR/cert"; cp ~/.acme.sh/${DOMAIN}_ecc/fullchain.cer "$INSTALL_DIR/cert/fullchain.crt"; cp ~/.acme.sh/${DOMAIN}_ecc/${DOMAIN}.key "$INSTALL_DIR/cert/private.key"; ~/.acme.sh/acme.sh --install-cert -d "$DOMAIN" --ecc --key-file "$INSTALL_DIR/cert/private.key" --fullchain-file "$INSTALL_DIR/cert/fullchain.crt" --reloadcmd "systemctl restart $SERVICE_NAME" >/dev/null 2>&1; print_success "证书完成"; return 0; }
     print_info "申请证书..."; fuser -k 80/tcp >/dev/null 2>&1; sleep 2
     [ ! -f ~/.acme.sh/acme.sh ] && curl -sL https://get.acme.sh | sh -s email="$EMAIL" >/dev/null 2>&1
