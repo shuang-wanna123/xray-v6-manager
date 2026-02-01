@@ -101,9 +101,10 @@ generate_xray_config() {
         first_inbound=false
     fi
     
+    # 构建 outbounds（带 sendThrough 绑定IP）
     local outbounds="" first_outbound=true
-    [ "$HAS_IPV4" = "true" ] && { outbounds+='{"tag":"IPv4-out","protocol":"freedom","settings":{"domainStrategy":"UseIPv4"}}'; first_outbound=false; }
-    [ "$HAS_IPV6" = "true" ] && { [ "$first_outbound" = "false" ] && outbounds+=","; outbounds+='{"tag":"IPv6-out","protocol":"freedom","settings":{"domainStrategy":"UseIPv6"}}'; first_outbound=false; }
+    [ "$HAS_IPV4" = "true" ] && { outbounds+='{"tag":"IPv4-out","protocol":"freedom","sendThrough":"'"$VPS_IP"'","settings":{"domainStrategy":"UseIPv4"}}'; first_outbound=false; }
+    [ "$HAS_IPV6" = "true" ] && { [ "$first_outbound" = "false" ] && outbounds+=","; outbounds+='{"tag":"IPv6-out","protocol":"freedom","sendThrough":"'"$IPV6_ADDR"'","settings":{"domainStrategy":"UseIPv6"}}'; first_outbound=false; }
     
     # 根据VPS环境选择优先策略
     local prefer_strategy="UseIPv4"
@@ -157,13 +158,13 @@ generate_info() {
         fi
         
         if [ "$VLESS_V4_ENABLED" = "true" ] && [ "$HAS_IPV4" = "true" ]; then
-            echo -e "\n  节点 ${node_num}: VLESS-IPv4（端口 ${VLESS_V4_PORT}）出站: 强制IPv4"
+            echo -e "\n  节点 ${node_num}: VLESS-IPv4（端口 ${VLESS_V4_PORT}）出站: 强制IPv4 → ${VPS_IP}"
             echo "  vless://${UUID}@${CDN_HOST}:${VLESS_V4_PORT}?encryption=none&security=tls&sni=${DOMAIN}&type=ws&host=${DOMAIN}&path=${ep_v4}#IPv4-CDN-${node_num}"
             ((node_num++))
         fi
         
         if [ "$VLESS_V6_ENABLED" = "true" ] && [ "$HAS_IPV6" = "true" ]; then
-            echo -e "\n  节点 ${node_num}: VLESS-IPv6（端口 ${VLESS_V6_PORT}）出站: 强制IPv6"
+            echo -e "\n  节点 ${node_num}: VLESS-IPv6（端口 ${VLESS_V6_PORT}）出站: 强制IPv6 → ${IPV6_ADDR}"
             echo "  vless://${UUID}@${CDN_HOST}:${VLESS_V6_PORT}?encryption=none&security=tls&sni=${DOMAIN}&type=ws&host=${DOMAIN}&path=${ep_v6}#IPv6-CDN-${node_num}"
             ((node_num++))
         fi
@@ -227,9 +228,10 @@ regenerate_all() {
     [ "$VLESS_V6_ENABLED" = "true" ] && [ "$HAS_IPV6" = "true" ] && { [ "$first" = "false" ] && inbounds+=","; inbounds+='{"tag":"vless-v6-in","listen":"::","port":'$VLESS_V6_PORT',"protocol":"vless","settings":{"clients":[{"id":"'$UUID'"}],"decryption":"none"},"streamSettings":{"network":"ws","security":"tls","tlsSettings":{"certificates":[{"certificateFile":"'$DIR'/cert/fullchain.crt","keyFile":"'$DIR'/cert/private.key"}]},"wsSettings":{"path":"'$VLESS_V6_PATH'"}}}'; first=false; }
     [ "$VLESS_P6_ENABLED" = "true" ] && { [ "$first" = "false" ] && inbounds+=","; inbounds+='{"tag":"vless-p6-in","listen":"::","port":'$VLESS_P6_PORT',"protocol":"vless","settings":{"clients":[{"id":"'$UUID'"}],"decryption":"none"},"streamSettings":{"network":"ws","security":"tls","tlsSettings":{"certificates":[{"certificateFile":"'$DIR'/cert/fullchain.crt","keyFile":"'$DIR'/cert/private.key"}]},"wsSettings":{"path":"'$VLESS_P6_PATH'"}}}'; first=false; }
     
+    # 构建 outbounds（带 sendThrough 绑定IP）
     local outbounds="" first=true
-    [ "$HAS_IPV4" = "true" ] && { outbounds+='{"tag":"IPv4-out","protocol":"freedom","settings":{"domainStrategy":"UseIPv4"}}'; first=false; }
-    [ "$HAS_IPV6" = "true" ] && { [ "$first" = "false" ] && outbounds+=","; outbounds+='{"tag":"IPv6-out","protocol":"freedom","settings":{"domainStrategy":"UseIPv6"}}'; first=false; }
+    [ "$HAS_IPV4" = "true" ] && { outbounds+='{"tag":"IPv4-out","protocol":"freedom","sendThrough":"'$VPS_IP'","settings":{"domainStrategy":"UseIPv4"}}'; first=false; }
+    [ "$HAS_IPV6" = "true" ] && { [ "$first" = "false" ] && outbounds+=","; outbounds+='{"tag":"IPv6-out","protocol":"freedom","sendThrough":"'$IPV6_ADDR'","settings":{"domainStrategy":"UseIPv6"}}'; first=false; }
     
     # 根据VPS环境选择优先策略
     local ps="UseIPv4"
@@ -259,8 +261,8 @@ regenerate_all() {
         echo "  域名: $DOMAIN  |  UUID: $UUID  |  优选地址: $CDN_HOST"
         
         [ "$SOCKS5_P6_ENABLED" = "true" ] && { local cip="${VPS_IP:-$IPV6_ADDR}"; echo -e "\n  节点 ${node_num}: SOCKS5（端口 ${SOCKS5_P6_PORT}）"; echo "  socks5://${SOCKS5_P6_USER}:${SOCKS5_P6_PASS}@${cip}:${SOCKS5_P6_PORT}#SOCKS5-${node_num}"; ((node_num++)); }
-        [ "$VLESS_V4_ENABLED" = "true" ] && [ "$HAS_IPV4" = "true" ] && { echo -e "\n  节点 ${node_num}: VLESS-IPv4（端口 ${VLESS_V4_PORT}）"; echo "  vless://${UUID}@${CDN_HOST}:${VLESS_V4_PORT}?encryption=none&security=tls&sni=${DOMAIN}&type=ws&host=${DOMAIN}&path=${ep_v4}#IPv4-CDN-${node_num}"; ((node_num++)); }
-        [ "$VLESS_V6_ENABLED" = "true" ] && [ "$HAS_IPV6" = "true" ] && { echo -e "\n  节点 ${node_num}: VLESS-IPv6（端口 ${VLESS_V6_PORT}）"; echo "  vless://${UUID}@${CDN_HOST}:${VLESS_V6_PORT}?encryption=none&security=tls&sni=${DOMAIN}&type=ws&host=${DOMAIN}&path=${ep_v6}#IPv6-CDN-${node_num}"; ((node_num++)); }
+        [ "$VLESS_V4_ENABLED" = "true" ] && [ "$HAS_IPV4" = "true" ] && { echo -e "\n  节点 ${node_num}: VLESS-IPv4（端口 ${VLESS_V4_PORT}）出站: 强制IPv4 → ${VPS_IP}"; echo "  vless://${UUID}@${CDN_HOST}:${VLESS_V4_PORT}?encryption=none&security=tls&sni=${DOMAIN}&type=ws&host=${DOMAIN}&path=${ep_v4}#IPv4-CDN-${node_num}"; ((node_num++)); }
+        [ "$VLESS_V6_ENABLED" = "true" ] && [ "$HAS_IPV6" = "true" ] && { echo -e "\n  节点 ${node_num}: VLESS-IPv6（端口 ${VLESS_V6_PORT}）出站: 强制IPv6 → ${IPV6_ADDR}"; echo "  vless://${UUID}@${CDN_HOST}:${VLESS_V6_PORT}?encryption=none&security=tls&sni=${DOMAIN}&type=ws&host=${DOMAIN}&path=${ep_v6}#IPv6-CDN-${node_num}"; ((node_num++)); }
         [ "$VLESS_P6_ENABLED" = "true" ] && { echo -e "\n  节点 ${node_num}: VLESS-优先IPv6（端口 ${VLESS_P6_PORT}）"; echo "  vless://${UUID}@${CDN_HOST}:${VLESS_P6_PORT}?encryption=none&security=tls&sni=${DOMAIN}&type=ws&host=${DOMAIN}&path=${ep_p6}#IPv4%26IPv6-CDN-${node_num}"; ((node_num++)); }
         echo ""
     } > "$DIR/info.txt"
