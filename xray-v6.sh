@@ -21,9 +21,9 @@ OS="" ARCH="" XRAY_ARCH="" VPS_IP="" IPV6_ADDR=""
 HAS_IPV4="false" HAS_IPV6="false"
 DOMAIN="" EMAIL="" UUID="" CDN_HOST="visa.com"
 
-SOCKS5_P6_ENABLED="false" SOCKS5_P6_PORT="" SOCKS5_P6_USER="" SOCKS5_P6_PASS=""
 SOCKS5_V4_ENABLED="false" SOCKS5_V4_PORT="" SOCKS5_V4_USER="" SOCKS5_V4_PASS=""
 SOCKS5_V6_ENABLED="false" SOCKS5_V6_PORT="" SOCKS5_V6_USER="" SOCKS5_V6_PASS=""
+SOCKS5_P6_ENABLED="false" SOCKS5_P6_PORT="" SOCKS5_P6_USER="" SOCKS5_P6_PASS=""
 VLESS_V4_ENABLED="false" VLESS_V4_PORT="" VLESS_V4_PATH=""
 VLESS_V6_ENABLED="false" VLESS_V6_PORT="" VLESS_V6_PATH=""
 VLESS_P6_ENABLED="false" VLESS_P6_PORT="" VLESS_P6_PATH=""
@@ -42,6 +42,24 @@ get_random_port() {
         check_port_available "$port" && echo "$port" && return 0
     done
     echo $((RANDOM % (max - min + 1) + min))
+}
+
+port_selected() {
+    local port="$1" used
+    [ -z "$port" ] && return 1
+    for used in "$SOCKS5_V4_PORT" "$SOCKS5_V6_PORT" "$SOCKS5_P6_PORT" "$VLESS_V4_PORT" "$VLESS_V6_PORT" "$VLESS_P6_PORT"; do
+        [ -n "$used" ] && [ "$port" = "$used" ] && return 0
+    done
+    return 1
+}
+
+get_random_node_port() {
+    local p
+    for _ in {1..100}; do
+        p=$(get_random_port "$1" "$2")
+        ! port_selected "$p" && echo "$p" && return 0
+    done
+    get_random_port "$1" "$2"
 }
 
 random_string() { tr -dc 'a-z0-9' < /dev/urandom 2>/dev/null | head -c "$1"; }
@@ -190,25 +208,25 @@ generate_info() {
         if [ "$SOCKS5_P6_ENABLED" = "true" ]; then
             local cip; cip=$(format_url_host "${VPS_IP:-$IPV6_ADDR}")
             echo -e "\n  节点 ${node_num}: SOCKS5-优先IPv6（端口 ${SOCKS5_P6_PORT}）出站: 优先IPv6"
-            echo "  socks5://${SOCKS5_P6_USER}:${SOCKS5_P6_PASS}@${cip}:${SOCKS5_P6_PORT}#SOCKS5-${node_num}"
+            echo "  socks5://${SOCKS5_P6_USER}:${SOCKS5_P6_PASS}@${cip}:${SOCKS5_P6_PORT}#SOCKS5-IPv6优先-${node_num}"
             ((node_num++))
         fi
         
         if [ "$VLESS_V4_ENABLED" = "true" ] && [ "$HAS_IPV4" = "true" ]; then
             echo -e "\n  节点 ${node_num}: VLESS-IPv4（端口 ${VLESS_V4_PORT}）出站: 强制IPv4 → ${VPS_IP}"
-            echo "  vless://${UUID}@${CDN_HOST}:${VLESS_V4_PORT}?encryption=none&security=tls&sni=${DOMAIN}&type=ws&host=${DOMAIN}&path=${ep_v4}#IPv4-CDN-${node_num}"
+            echo "  vless://${UUID}@${CDN_HOST}:${VLESS_V4_PORT}?encryption=none&security=tls&sni=${DOMAIN}&type=ws&host=${DOMAIN}&path=${ep_v4}#VLESS-IPv4-CDN-${node_num}"
             ((node_num++))
         fi
         
         if [ "$VLESS_V6_ENABLED" = "true" ] && [ "$HAS_IPV6" = "true" ]; then
             echo -e "\n  节点 ${node_num}: VLESS-IPv6（端口 ${VLESS_V6_PORT}）出站: 强制IPv6 → ${IPV6_ADDR}"
-            echo "  vless://${UUID}@${CDN_HOST}:${VLESS_V6_PORT}?encryption=none&security=tls&sni=${DOMAIN}&type=ws&host=${DOMAIN}&path=${ep_v6}#IPv6-CDN-${node_num}"
+            echo "  vless://${UUID}@${CDN_HOST}:${VLESS_V6_PORT}?encryption=none&security=tls&sni=${DOMAIN}&type=ws&host=${DOMAIN}&path=${ep_v6}#VLESS-IPv6-CDN-${node_num}"
             ((node_num++))
         fi
         
         if [ "$VLESS_P6_ENABLED" = "true" ]; then
             echo -e "\n  节点 ${node_num}: VLESS-优先IPv6（端口 ${VLESS_P6_PORT}）出站: 优先IPv6"
-            echo "  vless://${UUID}@${CDN_HOST}:${VLESS_P6_PORT}?encryption=none&security=tls&sni=${DOMAIN}&type=ws&host=${DOMAIN}&path=${ep_p6}#IPv4%26IPv6-CDN-${node_num}"
+            echo "  vless://${UUID}@${CDN_HOST}:${VLESS_P6_PORT}?encryption=none&security=tls&sni=${DOMAIN}&type=ws&host=${DOMAIN}&path=${ep_p6}#VLESS-IPv4%26IPv6-CDN-${node_num}"
             ((node_num++))
         fi
         
@@ -251,6 +269,8 @@ EOF
 }
 check_port_available() { [ -z "$1" ] && return 1; ss -tlnp 2>/dev/null | grep -q ":$1 " && return 1; return 0; }
 get_random_port() { for _ in {1..100}; do local p=$((RANDOM % ($2 - $1 + 1) + $1)); check_port_available "$p" && echo "$p" && return 0; done; echo $((RANDOM % ($2 - $1 + 1) + $1)); }
+port_selected() { local port="$1" used; [ -z "$port" ] && return 1; for used in "$SOCKS5_V4_PORT" "$SOCKS5_V6_PORT" "$SOCKS5_P6_PORT" "$VLESS_V4_PORT" "$VLESS_V6_PORT" "$VLESS_P6_PORT"; do [ -n "$used" ] && [ "$port" = "$used" ] && return 0; done; return 1; }
+get_random_node_port() { local p; for _ in {1..100}; do p=$(get_random_port "$1" "$2"); ! port_selected "$p" && echo "$p" && return 0; done; get_random_port "$1" "$2"; }
 random_string() { tr -dc 'a-z0-9' < /dev/urandom 2>/dev/null | head -c "$1"; }
 random_password() { tr -dc 'a-zA-Z0-9' < /dev/urandom 2>/dev/null | head -c "$1"; }
 url_encode_path() { echo "$1" | sed 's/\//%2F/g'; }
@@ -310,10 +330,10 @@ regenerate_all() {
         
         [ "$SOCKS5_V4_ENABLED" = "true" ] && [ "$HAS_IPV4" = "true" ] && { local cip; cip=$(format_url_host "$VPS_IP"); echo -e "\n  节点 ${node_num}: SOCKS5-仅IPv4（端口 ${SOCKS5_V4_PORT}）出站: 强制IPv4 → ${VPS_IP}"; echo "  socks5://${SOCKS5_V4_USER}:${SOCKS5_V4_PASS}@${cip}:${SOCKS5_V4_PORT}#SOCKS5-IPv4-${node_num}"; ((node_num++)); }
         [ "$SOCKS5_V6_ENABLED" = "true" ] && [ "$HAS_IPV6" = "true" ] && { local cip; cip=$(format_url_host "${VPS_IP:-$IPV6_ADDR}"); echo -e "\n  节点 ${node_num}: SOCKS5-仅IPv6（端口 ${SOCKS5_V6_PORT}）出站: 强制IPv6 → ${IPV6_ADDR}"; echo "  socks5://${SOCKS5_V6_USER}:${SOCKS5_V6_PASS}@${cip}:${SOCKS5_V6_PORT}#SOCKS5-IPv6-${node_num}"; ((node_num++)); }
-        [ "$SOCKS5_P6_ENABLED" = "true" ] && { local cip; cip=$(format_url_host "${VPS_IP:-$IPV6_ADDR}"); echo -e "\n  节点 ${node_num}: SOCKS5-优先IPv6（端口 ${SOCKS5_P6_PORT}）"; echo "  socks5://${SOCKS5_P6_USER}:${SOCKS5_P6_PASS}@${cip}:${SOCKS5_P6_PORT}#SOCKS5-${node_num}"; ((node_num++)); }
-        [ "$VLESS_V4_ENABLED" = "true" ] && [ "$HAS_IPV4" = "true" ] && { echo -e "\n  节点 ${node_num}: VLESS-IPv4（端口 ${VLESS_V4_PORT}）出站: 强制IPv4 → ${VPS_IP}"; echo "  vless://${UUID}@${CDN_HOST}:${VLESS_V4_PORT}?encryption=none&security=tls&sni=${DOMAIN}&type=ws&host=${DOMAIN}&path=${ep_v4}#IPv4-CDN-${node_num}"; ((node_num++)); }
-        [ "$VLESS_V6_ENABLED" = "true" ] && [ "$HAS_IPV6" = "true" ] && { echo -e "\n  节点 ${node_num}: VLESS-IPv6（端口 ${VLESS_V6_PORT}）出站: 强制IPv6 → ${IPV6_ADDR}"; echo "  vless://${UUID}@${CDN_HOST}:${VLESS_V6_PORT}?encryption=none&security=tls&sni=${DOMAIN}&type=ws&host=${DOMAIN}&path=${ep_v6}#IPv6-CDN-${node_num}"; ((node_num++)); }
-        [ "$VLESS_P6_ENABLED" = "true" ] && { echo -e "\n  节点 ${node_num}: VLESS-优先IPv6（端口 ${VLESS_P6_PORT}）"; echo "  vless://${UUID}@${CDN_HOST}:${VLESS_P6_PORT}?encryption=none&security=tls&sni=${DOMAIN}&type=ws&host=${DOMAIN}&path=${ep_p6}#IPv4%26IPv6-CDN-${node_num}"; ((node_num++)); }
+        [ "$SOCKS5_P6_ENABLED" = "true" ] && { local cip; cip=$(format_url_host "${VPS_IP:-$IPV6_ADDR}"); echo -e "\n  节点 ${node_num}: SOCKS5-优先IPv6（端口 ${SOCKS5_P6_PORT}）"; echo "  socks5://${SOCKS5_P6_USER}:${SOCKS5_P6_PASS}@${cip}:${SOCKS5_P6_PORT}#SOCKS5-IPv6优先-${node_num}"; ((node_num++)); }
+        [ "$VLESS_V4_ENABLED" = "true" ] && [ "$HAS_IPV4" = "true" ] && { echo -e "\n  节点 ${node_num}: VLESS-IPv4（端口 ${VLESS_V4_PORT}）出站: 强制IPv4 → ${VPS_IP}"; echo "  vless://${UUID}@${CDN_HOST}:${VLESS_V4_PORT}?encryption=none&security=tls&sni=${DOMAIN}&type=ws&host=${DOMAIN}&path=${ep_v4}#VLESS-IPv4-CDN-${node_num}"; ((node_num++)); }
+        [ "$VLESS_V6_ENABLED" = "true" ] && [ "$HAS_IPV6" = "true" ] && { echo -e "\n  节点 ${node_num}: VLESS-IPv6（端口 ${VLESS_V6_PORT}）出站: 强制IPv6 → ${IPV6_ADDR}"; echo "  vless://${UUID}@${CDN_HOST}:${VLESS_V6_PORT}?encryption=none&security=tls&sni=${DOMAIN}&type=ws&host=${DOMAIN}&path=${ep_v6}#VLESS-IPv6-CDN-${node_num}"; ((node_num++)); }
+        [ "$VLESS_P6_ENABLED" = "true" ] && { echo -e "\n  节点 ${node_num}: VLESS-优先IPv6（端口 ${VLESS_P6_PORT}）"; echo "  vless://${UUID}@${CDN_HOST}:${VLESS_P6_PORT}?encryption=none&security=tls&sni=${DOMAIN}&type=ws&host=${DOMAIN}&path=${ep_p6}#VLESS-IPv4%26IPv6-CDN-${node_num}"; ((node_num++)); }
         echo ""
     } > "$DIR/info.txt"
     echo -e "${GREEN}配置已更新${NC}"; return 0
@@ -334,6 +354,7 @@ show_menu() {
     echo -e "╚═══════════════════════════════════════════════════════════════╝${NC}"
     systemctl is-active --quiet $SERVICE 2>/dev/null && echo -e "  服务: ${GREEN}● 运行中${NC}" || echo -e "  服务: ${RED}● 已停止${NC}"
     echo -e "  节点: ${YELLOW}${enabled}/6${NC}  UUID: ${YELLOW}${UUID:0:8}...${NC}  WebRTC: ${GREEN}✅${NC}"
+
     echo -e "\n${CYAN}─── 服务 ───${NC}"
     echo "  1. 查看信息"
     echo "  2. 启动服务"
@@ -341,12 +362,14 @@ show_menu() {
     echo "  4. 重启服务"
     echo "  5. 查看状态"
     echo "  6. 查看日志"
+
     echo -e "\n${CYAN}─── 节点 ───${NC}"
     echo "  7. 节点状态"
     echo "  8. 节点开关"
     echo "  9. 修改节点"
     echo "  10. 新增节点"
     echo "  11. 删除节点"
+
     echo -e "\n${CYAN}─── 配置 ───${NC}"
     echo "  12. 修改 UUID"
     echo "  13. 修改 CDN"
@@ -397,22 +420,41 @@ toggle_node() {
         0) return;;
         1) [ "$HAS_IPV4" != "true" ] && { echo -e "${RED}无IPv4${NC}"; sleep 2; return; }
            if [ "$SOCKS5_V4_ENABLED" = "true" ]; then SOCKS5_V4_ENABLED="false"; else
-               [ -z "$SOCKS5_V4_PORT" ] && SOCKS5_V4_PORT=$(get_random_port 20000 30000)
+               [ -z "$SOCKS5_V4_PORT" ] && SOCKS5_V4_PORT=$(get_random_node_port 20000 30000)
                [ -z "$SOCKS5_V4_USER" ] && SOCKS5_V4_USER=$(random_string 10)
                [ -z "$SOCKS5_V4_PASS" ] && SOCKS5_V4_PASS=$(random_password 12)
                SOCKS5_V4_ENABLED="true"
            fi;;
         2) [ "$HAS_IPV6" != "true" ] && { echo -e "${RED}无IPv6${NC}"; sleep 2; return; }
            if [ "$SOCKS5_V6_ENABLED" = "true" ]; then SOCKS5_V6_ENABLED="false"; else
-               [ -z "$SOCKS5_V6_PORT" ] && SOCKS5_V6_PORT=$(get_random_port 20000 30000)
+               [ -z "$SOCKS5_V6_PORT" ] && SOCKS5_V6_PORT=$(get_random_node_port 20000 30000)
                [ -z "$SOCKS5_V6_USER" ] && SOCKS5_V6_USER=$(random_string 10)
                [ -z "$SOCKS5_V6_PASS" ] && SOCKS5_V6_PASS=$(random_password 12)
                SOCKS5_V6_ENABLED="true"
            fi;;
-        3) [ "$SOCKS5_P6_ENABLED" = "true" ] && SOCKS5_P6_ENABLED="false" || SOCKS5_P6_ENABLED="true";;
-        4) [ "$HAS_IPV4" != "true" ] && { echo -e "${RED}无IPv4${NC}"; sleep 2; return; }; [ "$VLESS_V4_ENABLED" = "true" ] && VLESS_V4_ENABLED="false" || VLESS_V4_ENABLED="true";;
-        5) [ "$HAS_IPV6" != "true" ] && { echo -e "${RED}无IPv6${NC}"; sleep 2; return; }; [ "$VLESS_V6_ENABLED" = "true" ] && VLESS_V6_ENABLED="false" || VLESS_V6_ENABLED="true";;
-        6) [ "$VLESS_P6_ENABLED" = "true" ] && VLESS_P6_ENABLED="false" || VLESS_P6_ENABLED="true";;
+        3) if [ "$SOCKS5_P6_ENABLED" = "true" ]; then SOCKS5_P6_ENABLED="false"; else
+               [ -z "$SOCKS5_P6_PORT" ] && SOCKS5_P6_PORT=$(get_random_node_port 20000 30000)
+               [ -z "$SOCKS5_P6_USER" ] && SOCKS5_P6_USER=$(random_string 10)
+               [ -z "$SOCKS5_P6_PASS" ] && SOCKS5_P6_PASS=$(random_password 12)
+               SOCKS5_P6_ENABLED="true"
+           fi;;
+        4) [ "$HAS_IPV4" != "true" ] && { echo -e "${RED}无IPv4${NC}"; sleep 2; return; }
+           if [ "$VLESS_V4_ENABLED" = "true" ]; then VLESS_V4_ENABLED="false"; else
+               [ -z "$VLESS_V4_PORT" ] && VLESS_V4_PORT="2053"
+               [ -z "$VLESS_V4_PATH" ] && VLESS_V4_PATH="/$(random_string 8)"
+               VLESS_V4_ENABLED="true"
+           fi;;
+        5) [ "$HAS_IPV6" != "true" ] && { echo -e "${RED}无IPv6${NC}"; sleep 2; return; }
+           if [ "$VLESS_V6_ENABLED" = "true" ]; then VLESS_V6_ENABLED="false"; else
+               [ -z "$VLESS_V6_PORT" ] && VLESS_V6_PORT="2083"
+               [ -z "$VLESS_V6_PATH" ] && VLESS_V6_PATH="/$(random_string 8)"
+               VLESS_V6_ENABLED="true"
+           fi;;
+        6) if [ "$VLESS_P6_ENABLED" = "true" ]; then VLESS_P6_ENABLED="false"; else
+               [ -z "$VLESS_P6_PORT" ] && VLESS_P6_PORT="2087"
+               [ -z "$VLESS_P6_PATH" ] && VLESS_P6_PATH="/$(random_string 8)"
+               VLESS_P6_ENABLED="true"
+           fi;;
         *) echo -e "${RED}无效${NC}"; sleep 1; return;;
     esac
     save_params; regenerate_all && { echo -n -e "${YELLOW}重启？(y/n): ${NC}"; read -r r; [ "$r" = "y" ] && restart_service; }; sleep 2
@@ -462,16 +504,16 @@ add_node() {
         0) return;;
         1) [ "$HAS_IPV4" != "true" ] && { echo -e "${RED}无IPv4${NC}"; sleep 2; return; }
            [ "$SOCKS5_V4_ENABLED" = "true" ] && { echo -e "${YELLOW}已启用${NC}"; sleep 2; return; }
-           echo -n "端口(随机): "; read -r p; [ -z "$p" ] && p=$(get_random_port 20000 30000); SOCKS5_V4_PORT="$p"
+           echo -n "端口(随机): "; read -r p; [ -z "$p" ] && p=$(get_random_node_port 20000 30000); SOCKS5_V4_PORT="$p"
            echo -n "用户名(随机): "; read -r u; [ -z "$u" ] && u=$(random_string 10); SOCKS5_V4_USER="$u"
            echo -n "密码(随机): "; read -r w; [ -z "$w" ] && w=$(random_password 12); SOCKS5_V4_PASS="$w"; SOCKS5_V4_ENABLED="true";;
         2) [ "$HAS_IPV6" != "true" ] && { echo -e "${RED}无IPv6${NC}"; sleep 2; return; }
            [ "$SOCKS5_V6_ENABLED" = "true" ] && { echo -e "${YELLOW}已启用${NC}"; sleep 2; return; }
-           echo -n "端口(随机): "; read -r p; [ -z "$p" ] && p=$(get_random_port 20000 30000); SOCKS5_V6_PORT="$p"
+           echo -n "端口(随机): "; read -r p; [ -z "$p" ] && p=$(get_random_node_port 20000 30000); SOCKS5_V6_PORT="$p"
            echo -n "用户名(随机): "; read -r u; [ -z "$u" ] && u=$(random_string 10); SOCKS5_V6_USER="$u"
            echo -n "密码(随机): "; read -r w; [ -z "$w" ] && w=$(random_password 12); SOCKS5_V6_PASS="$w"; SOCKS5_V6_ENABLED="true";;
         3) [ "$SOCKS5_P6_ENABLED" = "true" ] && { echo -e "${YELLOW}已启用${NC}"; sleep 2; return; }
-           echo -n "端口(随机): "; read -r p; [ -z "$p" ] && p=$(get_random_port 20000 30000); SOCKS5_P6_PORT="$p"
+           echo -n "端口(随机): "; read -r p; [ -z "$p" ] && p=$(get_random_node_port 20000 30000); SOCKS5_P6_PORT="$p"
            echo -n "用户名(随机): "; read -r u; [ -z "$u" ] && u=$(random_string 10); SOCKS5_P6_USER="$u"
            echo -n "密码(随机): "; read -r w; [ -z "$w" ] && w=$(random_password 12); SOCKS5_P6_PASS="$w"; SOCKS5_P6_ENABLED="true";;
         4) [ "$HAS_IPV4" != "true" ] && { echo -e "${RED}无IPv4${NC}"; sleep 2; return; }
@@ -500,8 +542,7 @@ delete_node() {
     echo "  6. VLESS-p6 [$([ "$VLESS_P6_ENABLED" = "true" ] && echo "✅" || echo "❌")]"
     echo "  0. 返回"; echo -n "选择删除: "; read -r c
     case $c in
-        0) return;;
-        1) SOCKS5_V4_ENABLED="false"; SOCKS5_V4_PORT=""; SOCKS5_V4_USER=""; SOCKS5_V4_PASS="";;
+        0) return;; 1) SOCKS5_V4_ENABLED="false"; SOCKS5_V4_PORT=""; SOCKS5_V4_USER=""; SOCKS5_V4_PASS="";;
         2) SOCKS5_V6_ENABLED="false"; SOCKS5_V6_PORT=""; SOCKS5_V6_USER=""; SOCKS5_V6_PASS="";;
         3) SOCKS5_P6_ENABLED="false"; SOCKS5_P6_PORT=""; SOCKS5_P6_USER=""; SOCKS5_P6_PASS="";;
         4) VLESS_V4_ENABLED="false"; VLESS_V4_PORT=""; VLESS_V4_PATH="";;
@@ -567,7 +608,8 @@ print_banner() {
     clear; echo -e "${CYAN}"
     echo "╔═══════════════════════════════════════════════════════════════╗"
     echo "║          Xray 多节点安装脚本 v${SCRIPT_VERSION}                          ║"
-    echo "║  • SOCKS5/VLESS 优先IPv6  • VLESS 强制IPv4/IPv6              ║"
+    echo "║  • SOCKS5: 仅IPv4 / 仅IPv6 / 优先IPv6                       ║"
+    echo "║  • VLESS : 强制IPv4 / 强制IPv6 / 优先IPv6                   ║"
     echo "║  ✅ 双栈接入 ✅ 快速部署 ✅ WebRTC拦截                        ║"
     echo -e "╚═══════════════════════════════════════════════════════════════╝${NC}"
 }
@@ -598,17 +640,29 @@ get_user_input() {
     while [ -z "$DOMAIN" ]; do echo -n -e "${YELLOW}请输入域名: ${NC}"; read -r DOMAIN; [ -z "$DOMAIN" ] && echo -e "${RED}不能为空${NC}"; done
     EMAIL="admin@$DOMAIN"; UUID=$(generate_uuid); CDN_HOST="visa.com"
     
-    SOCKS5_P6_ENABLED="true"; SOCKS5_P6_PORT=$(get_random_port 20000 30000); SOCKS5_P6_USER=$(random_string 10); SOCKS5_P6_PASS=$(random_password 12)
-    SOCKS5_V4_ENABLED="false"; SOCKS5_V4_PORT=""; SOCKS5_V4_USER=""; SOCKS5_V4_PASS=""
-    SOCKS5_V6_ENABLED="false"; SOCKS5_V6_PORT=""; SOCKS5_V6_USER=""; SOCKS5_V6_PASS=""
-    [ "$HAS_IPV4" = "true" ] && { VLESS_V4_ENABLED="true"; VLESS_V4_PORT="2053"; VLESS_V4_PATH="/$(random_string 8)"; } || VLESS_V4_ENABLED="false"
-    [ "$HAS_IPV6" = "true" ] && { VLESS_V6_ENABLED="true"; VLESS_V6_PORT="2083"; VLESS_V6_PATH="/$(random_string 8)"; } || VLESS_V6_ENABLED="false"
+    if [ "$HAS_IPV4" = "true" ]; then
+        SOCKS5_V4_ENABLED="true"; SOCKS5_V4_PORT=$(get_random_node_port 20000 30000); SOCKS5_V4_USER=$(random_string 10); SOCKS5_V4_PASS=$(random_password 12)
+        VLESS_V4_ENABLED="true"; VLESS_V4_PORT="2053"; VLESS_V4_PATH="/$(random_string 8)"
+    else
+        SOCKS5_V4_ENABLED="false"; VLESS_V4_ENABLED="false"
+    fi
+    
+    if [ "$HAS_IPV6" = "true" ]; then
+        SOCKS5_V6_ENABLED="true"; SOCKS5_V6_PORT=$(get_random_node_port 20000 30000); SOCKS5_V6_USER=$(random_string 10); SOCKS5_V6_PASS=$(random_password 12)
+        VLESS_V6_ENABLED="true"; VLESS_V6_PORT="2083"; VLESS_V6_PATH="/$(random_string 8)"
+    else
+        SOCKS5_V6_ENABLED="false"; VLESS_V6_ENABLED="false"
+    fi
+    
+    SOCKS5_P6_ENABLED="true"; SOCKS5_P6_PORT=$(get_random_node_port 20000 30000); SOCKS5_P6_USER=$(random_string 10); SOCKS5_P6_PASS=$(random_password 12)
     VLESS_P6_ENABLED="true"; VLESS_P6_PORT="2087"; VLESS_P6_PATH="/$(random_string 8)"
     
     echo -e "\n${CYAN}═══════════════════════════════════════════════════════════════${NC}"
     echo -e "  域名: ${YELLOW}$DOMAIN${NC}  UUID: ${YELLOW}${UUID:0:8}...${NC}  CDN: ${YELLOW}$CDN_HOST${NC}"
     echo -e "  IPv4: ${YELLOW}${VPS_IP:-无}${NC}  IPv6: ${YELLOW}${IPV6_ADDR:-无}${NC}"
     echo -e "  节点:"
+    [ "$SOCKS5_V4_ENABLED" = "true" ] && echo -e "    ${GREEN}✓${NC} SOCKS5-仅v4 :$SOCKS5_V4_PORT"
+    [ "$SOCKS5_V6_ENABLED" = "true" ] && echo -e "    ${GREEN}✓${NC} SOCKS5-仅v6 :$SOCKS5_V6_PORT"
     [ "$SOCKS5_P6_ENABLED" = "true" ] && echo -e "    ${GREEN}✓${NC} SOCKS5-优先v6 :$SOCKS5_P6_PORT"
     [ "$VLESS_V4_ENABLED" = "true" ] && echo -e "    ${GREEN}✓${NC} VLESS-强制v4 :$VLESS_V4_PORT"
     [ "$VLESS_V6_ENABLED" = "true" ] && echo -e "    ${GREEN}✓${NC} VLESS-强制v6 :$VLESS_V6_PORT"
